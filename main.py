@@ -1,12 +1,13 @@
-# main.py
-
 import uvicorn
 import psutil
 import datetime
 import time
 import subprocess
 import socket
-from fastapi import FastAPI, Request, Depends, Form, HTTPException
+import os
+import sys
+import threading
+from fastapi import FastAPI, Request, Depends, Form, HTTPException, Body
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -15,12 +16,9 @@ from pathlib import Path
 from app import crud, security
 from app.database import SessionLocal, create_db_and_tables
 
-# --- Global variables for network speed calculation ---
-last_net_io = psutil.net_io_counters()
-last_time = time.time()
-# ----------------------------------------------------
-
+# --- Create DB and Tables on initial import ---
 create_db_and_tables()
+
 app = FastAPI()
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -29,6 +27,11 @@ app.mount(
     StaticFiles(directory=str(Path(BASE_DIR, 'static'))),
     name="static"
 )
+
+# --- Global variables for network speed calculation ---
+last_net_io = psutil.net_io_counters()
+last_time = time.time()
+# ----------------------------------------------------
 
 # --- Helper functions for system interaction ---
 def run_shell_command(command):
@@ -46,18 +49,14 @@ def run_shell_command(command):
         return None
 
 def get_xray_status():
-    # systemctl is-active returns "active" or "inactive"
     status = run_shell_command("systemctl is-active xray.service")
     return status if status else "unknown"
 
 def get_xray_version():
-    output = run_shell_command("/usr/local/bin/xray --version") # Make sure the path is correct
+    output = run_shell_command("/usr/local/bin/xray --version")
     if output:
-        # Typically returns "Xray 1.8.4 (Xray, Penetrates Everything.) ..."
         return output.splitlines()[0]
     return "Not Found"
-# ---------------------------------------------
-
 
 def get_db():
     db = SessionLocal()
@@ -66,7 +65,7 @@ def get_db():
     finally:
         db.close()
 
-# ... (login and root routes are unchanged) ...
+# --- Page and Auth Routes ---
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
     return FileResponse(str(Path(BASE_DIR, 'templates', 'login.html')))
@@ -79,22 +78,24 @@ async def login(
 ):
     user = crud.get_user_by_username(db, username=username)
     if not user or not security.verify_password(password, user.hashed_password):
-        return JSONResponse(
-            status_code=401,
-            content={"message": "نام کاربری یا رمز عبور اشتباه است"}
-        )
+        return JSONResponse(status_code=401, content={"message": "نام کاربری یا رمز عبور اشتباه است"})
     return RedirectResponse(url="/dashboard", status_code=303)
-
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
     return FileResponse(str(Path(BASE_DIR, 'templates', 'dashboard.html')))
 
+@app.get("/panel-settings", response_class=HTMLResponse)
+async def get_panel_settings_page():
+    return FileResponse(str(Path(BASE_DIR, 'templates', 'panel_settings.html')))
+
+
+# --- API Routes ---
+
 @app.get("/api/v1/system/stats")
 async def get_system_stats():
     global last_net_io, last_time
 
-    # ... (CPU, RAM, Swap, Storage, etc. are unchanged) ...
     cpu_percent = psutil.cpu_percent(interval=0.1)
     cpu_count = psutil.cpu_count(logical=True)
     mem = psutil.virtual_memory()
@@ -124,8 +125,6 @@ async def get_system_stats():
     connections = psutil.net_connections()
     tcp_count = len([c for c in connections if c.status == 'ESTABLISHED' and c.type == 1])
     udp_count = len([c for c in connections if c.type == 2])
-
-    # --- NEW DATA: Xray Info & IP Addresses ---
     xray_status = get_xray_status()
     xray_version = get_xray_version()
     
@@ -136,7 +135,6 @@ async def get_system_stats():
                 ipv4_addrs.append(snicaddr.address)
             elif snicaddr.family == socket.AF_INET6 and not snicaddr.address.startswith("::1") and not snicaddr.address.startswith("fe80"):
                 ipv6_addrs.append(snicaddr.address)
-    # ----------------------------------------
 
     return {
         "cpu": {"percent": cpu_percent, "count": cpu_count},
@@ -151,10 +149,29 @@ async def get_system_stats():
         "ip_addresses": {"ipv4": sorted(list(set(ipv4_addrs))), "ipv6": sorted(list(set(ipv6_addrs)))}
     }
 
-# --- NEW API ENDPOINTS FOR XRAY CONTROL ---
+@app.get("/api/v1/panel/settings")
+async def read_settings(db: Session = Depends(get_db)):
+    settings = crud.get_settings(db)
+    return settings
+
+@app.post("/api/v1/panel/settings")
+async def write_settings(settings_data: dict = Body(...), db: Session = Depends(get_db)):
+    updated_settings = crud.update_settings(db, settings_data)
+    if not updated_settings:
+        raise HTTPException(status_code=404, detail="Settings not found.")
+    return {"status": "success", "message": "Settings saved successfully."}
+
+@app.post("/api/v1/panel/restart")
+async def restart_panel():
+    def restart_script():
+        time.sleep(1)
+        os.execv(sys.executable, ['python3'] + sys.argv)
+    threading.Thread(target=restart_script).start()
+    return {"status": "success", "message": "Panel is restarting..."}
+
 @app.post("/api/v1/xray/start")
 async def start_xray():
-    result = run_shell_command("sudo systemctl start xray.service")
+    run_shell_command("sudo systemctl start xray.service")
     if get_xray_status() == "active":
         return {"status": "success", "message": "Xray started successfully."}
     raise HTTPException(status_code=500, detail="Failed to start Xray.")
@@ -169,15 +186,36 @@ async def stop_xray():
 @app.post("/api/v1/xray/restart")
 async def restart_xray():
     run_shell_command("sudo systemctl restart xray.service")
-    time.sleep(1) # Give it a moment to restart
+    time.sleep(1)
     if get_xray_status() == "active":
         return {"status": "success", "message": "Xray restarted successfully."}
     raise HTTPException(status_code=500, detail="Failed to restart Xray.")
-# ---------------------------------------------
 
 
 if __name__ == "__main__":
-    host_ip = "0.0.0.0"
-    port_num = 443
-    print(f"Starting server on {host_ip}:{port_num}")
-    uvicorn.run("main:app", host=host_ip, port=port_num, reload=True)
+    db = SessionLocal()
+    settings = crud.get_settings(db)
+    
+    listen_port = settings.listen_port
+    public_key = settings.public_key_path
+    private_key = settings.private_key_path
+    
+    db.close()
+    
+    print("--- PANEL SETTINGS ---")
+    print(f"Port: {listen_port}")
+    print(f"SSL Cert: {public_key or 'Not Set'}")
+    print(f"SSL Key: {private_key or 'Not Set'}")
+    print("----------------------")
+
+    uvicorn_args = {
+        "host": "0.0.0.0",
+        "port": listen_port,
+        # "reload": True, # <-- THIS LINE IS REMOVED TO FIX THE RESTART ISSUE
+    }
+
+    if public_key and private_key:
+        uvicorn_args["ssl_keyfile"] = private_key
+        uvicorn_args["ssl_certfile"] = public_key
+
+    uvicorn.run("main:app", **uvicorn_args)

@@ -1,0 +1,159 @@
+/* static/css/settings.css */
+
+.settings-page {
+    flex-grow: 1;
+    padding: 32px;
+    direction: ltr; /* Base direction is LTR */
+}
+
+.settings-container {
+    max-width: 1000px;
+    margin: 0 auto;
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 24px;
+}
+
+.settings-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 16px;
+}
+
+.settings-header h1 {
+    font-size: 24px;
+    font-weight: 700;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.restart-banner {
+    background-color: #fffbeb;
+    color: #f59e0b;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+}
+.restart-banner.hidden { display: none; }
+
+.save-btn, .restart-btn {
+    font-family: 'Vazirmatn', sans-serif;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+}
+.save-btn:hover, .restart-btn:hover {
+    opacity: 0.85;
+}
+
+.save-btn { background-color: #22c55e; color: #fff; }
+.restart-btn { background-color: #ef4444; color: #fff; }
+
+.settings-tabs {
+    display: flex;
+    justify-content: flex-start; /* Align tabs to the left */
+    gap: 24px;
+    margin-top: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.tab {
+    padding: 12px 4px;
+    text-decoration: none;
+    color: var(--text-secondary);
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s ease;
+}
+.tab:hover { color: var(--text-primary); }
+.tab.active { color: var(--accent-color); border-bottom-color: var(--accent-color); }
+
+.accordion {
+    margin-top: 24px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+.accordion-item {
+    border-bottom: 1px solid var(--border-color);
+}
+.accordion-item:last-child {
+    border-bottom: none;
+}
+.accordion-header {
+    display: flex;
+    align-items: center;
+    gap: 12px; /* Space between chevron and text */
+    padding: 16px;
+    cursor: pointer;
+}
+
+.accordion-header .chevron {
+    width: 16px;
+    height: 16px;
+    transition: transform 0.3s ease;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='%2364748b'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M8.25 4.5l7.5 7.5-7.5 7.5' /%3E%3C/svg%3E%0A");
+    background-size: contain;
+}
+.accordion-item.active > .accordion-header .chevron {
+    transform: rotate(90deg); /* Rotate to point down */
+}
+
+.accordion-header h3 {
+    font-size: 16px;
+    font-weight: 500;
+    flex-grow: 1; /* Make text take available space */
+    text-align: ltr;
+    direction: ltr; /* Ensure persian text is aligned right */
+}
+.accordion-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+    padding: 0 24px;
+}
+.accordion-item.active > .accordion-body {
+    max-height: 500px;
+    padding: 0 24px 24px 24px;
+    transition: max-height 0.5s ease-in, padding 0.5s ease-in;
+}
+
+.form-group {
+    display: grid;
+    grid-template-columns: 1fr 250px; /* Input on left, Label on right */
+    align-items: start;
+    gap: 24px;
+    margin-bottom: 20px;
+}
+.form-group label {
+    font-weight: 500;
+    color: var(--text-primary);
+    text-align: ltr; /* Align label text to the right */
+    padding-top: 8px;
+    direction: ltr;
+}
+.form-group input, .form-group select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 14px;
+    text-align: left;
+}
+.form-group .helper-text {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    text-align: left;
+}

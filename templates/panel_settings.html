@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تنظیمات پنل</title>
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/settings.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <aside class="sidebar">
+            <h3>V-UI Panel</h3>
+            <nav>
+                <a href="/dashboard">Overview</a>
+                <a href="#">Inbounds</a>
+                <a href="/panel-settings" class="active">Panel Settings</a>
+                <a href="#">Xray Config</a>
+            </nav>
+            <div class="logout">
+                <a href="#">Log Out</a>
+            </div>
+        </aside>
+        <main class="settings-page">
+            <div class="settings-container">
+                <div class="settings-header">
+                    <h1>Panel Settings</h1>
+                    <div class="header-actions">
+                        <div id="restart-banner" class="restart-banner hidden">
+                            <span>Every change made here needs to be saved. Please restart the panel to apply changes.</span>
+                        </div>
+                        <button class="save-btn" onclick="saveSettings()">Save</button>
+                        <button class="restart-btn" onclick="restartPanel()">Restart Panel</button>
+                    </div>
+                </div>
+
+                <div class="settings-tabs">
+                    <a href="#" class="tab active">General</a>
+                    <a href="#" class="tab">Authentication</a>
+                    <a href="#" class="tab">Telegram Bot</a>
+                    <a href="#" class="tab">Subscription</a>
+                </div>
+
+                <div class="accordion">
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                            <span class="chevron"></span> <h3>General</h3>
+                        </div>
+                        <div class="accordion-body">
+                            <div class="form-group">
+                                <div><input type="number" id="listen_port" placeholder="443"></div>
+                                <label for="listen_port">Listen Port</label>
+                            </div>
+                            <div class="form-group">
+                                <div><select id="language"><option value="en">English</option><option value="fa">فارسی (Persian)</option></select></div>
+                                <label for="language">Language</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                            <span class="chevron"></span> <h3>Notifications</h3>
+                        </div>
+                        <div class="accordion-body"></div>
+                    </div>
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                            <span class="chevron"></span> <h3>Certificates</h3>
+                        </div>
+                        <div class="accordion-body">
+                            <div class="form-group">
+                                <div>
+                                    <input type="text" id="public_key_path" placeholder="/path/to/cert.pem">
+                                    <p class="helper-text">The public key file path for the web panel.</p>
+                                </div>
+                                <label for="public_key_path">Public Key Path</label>
+                            </div>
+                            <div class="form-group">
+                                <div>
+                                    <input type="text" id="private_key_path" placeholder="/path/to/key.pem">
+                                    <p class="helper-text">The private key file path for the web panel.</p>
+                                </div>
+                                <label for="private_key_path">Private Key Path</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                           <span class="chevron"></span> <h3>External Traffic</h3>
+                        </div>
+                        <div class="accordion-body"></div>
+                    </div>
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                           <span class="chevron"></span> <h3>Date and Time</h3>
+                        </div>
+                        <div class="accordion-body">
+                           <div class="form-group">
+                                <div><input type="text" id="time_zone" placeholder="Local"></div>
+                                <label for="time_zone">Time Zone</label>
+                           </div>
+                           <div class="form-group">
+                                <div><select id="calendar_type"><option value="Gregorian">Gregorian (Standard)</option><option value="Jalali">Jalali (Shamsi)</option></select></div>
+                                <label for="calendar_type">Calendar Type</label>
+                           </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+<script>
+    let isDirty = false;
+    const restartBanner = document.getElementById('restart-banner');
+    
+    function showRestartBanner() {
+        isDirty = true;
+        restartBanner.classList.remove('hidden');
+    }
+
+    async function loadSettings() {
+        try {
+            const response = await fetch('/api/v1/panel/settings');
+            const data = await response.json();
+            
+            document.getElementById('listen_port').value = data.listen_port;
+            document.getElementById('language').value = data.language;
+            document.getElementById('public_key_path').value = data.public_key_path || '';
+            document.getElementById('private_key_path').value = data.private_key_path || '';
+            document.getElementById('time_zone').value = data.time_zone;
+            document.getElementById('calendar_type').value = data.calendar_type;
+        } catch(e) { console.error("Failed to load settings:", e); }
+
+        document.querySelectorAll('.accordion input, .accordion select').forEach(el => {
+            el.addEventListener('input', showRestartBanner);
+        });
+    }
+
+    async function saveSettings() {
+        const settingsData = {
+            listen_port: parseInt(document.getElementById('listen_port').value, 10),
+            language: document.getElementById('language').value,
+            public_key_path: document.getElementById('public_key_path').value,
+            private_key_path: document.getElementById('private_key_path').value,
+            time_zone: document.getElementById('time_zone').value,
+            calendar_type: document.getElementById('calendar_type').value
+        };
+
+        const response = await fetch('/api/v1/panel/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settingsData)
+        });
+
+        if(response.ok) {
+            alert('Settings saved successfully! Please restart the panel to apply.');
+            isDirty = false;
+        } else {
+            alert('Error saving settings.');
+        }
+    }
+
+    async function restartPanel() {
+        if (isDirty) {
+            if (!confirm('You have unsaved changes. Are you sure you want to restart?')) { return; }
+        }
+        alert('Panel is restarting... Please wait a few moments and then refresh your browser.');
+        await fetch('/api/v1/panel/restart', { method: 'POST' });
+    }
+
+    // Accordion Logic
+    document.querySelectorAll('.accordion-header').forEach(header => {
+        header.addEventListener('click', () => {
+            const currentlyActive = document.querySelector('.accordion-item.active');
+            const clickedItem = header.parentElement;
+
+            if (currentlyActive && currentlyActive !== clickedItem) {
+                currentlyActive.classList.remove('active');
+            }
+            clickedItem.classList.toggle('active');
+        });
+    });
+
+    document.addEventListener('DOMContentLoaded', loadSettings);
+</script>
+</body>
+</html>
