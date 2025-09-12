@@ -1,0 +1,237 @@
+/* static/css/dashboard.css */
+:root {
+    --bg-color: #f8fafc;
+    --sidebar-bg: #ffffff;
+    --card-bg: #ffffff;
+    --text-primary: #0f172a;
+    --text-secondary: #64748b;
+    --accent-color: #059669; /* A teal/green color like the image */
+    --border-color: #e2e8f0;
+    --chart-track-color: #e2e8f0;
+}
+
+/* This is a modern CSS feature to allow animating gradients */
+@property --p {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Vazirmatn', sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.container {
+    display: flex;
+    direction: ltr;
+}
+.sidebar {
+    width: 240px;
+    height: 100vh;
+    background-color: var(--sidebar-bg);
+    border-left: 1px solid var(--border-color);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+
+.sidebar h3 {
+    font-size: 20px;
+    margin-bottom: 32px;
+}
+
+.sidebar nav a {
+    display: block;
+    color: var(--text-secondary);
+    text-decoration: none;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.sidebar nav a:hover {
+    color: var(--text-primary);
+}
+
+.sidebar nav a.active {
+    color: var(--accent-color);
+    font-weight: 700;
+}
+
+.sidebar .logout {
+    margin-top: auto;
+}
+
+.sidebar .logout a {
+    display: block;
+    color: var(--text-secondary);
+    text-decoration: none;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.sidebar .logout a:hover {
+    background-color: #f1f5f9;
+}
+
+.dashboard-grid {
+    flex-grow: 1;
+    padding: 32px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr); /* Always 4 columns */
+    gap: 24px;
+    align-content: start;
+}
+
+.stat-card {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 24px;
+}
+
+/* NEW STYLES FOR RESOURCE CARDS WITH CHARTS */
+.resource-card {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    grid-column: span 1;
+}
+
+.chart {
+    --p: 0; /* Percentage value, updated by JS */
+    width: 80px;
+    height: 80px;
+    flex-shrink: 0;
+    
+    position: relative;
+    display: grid;
+    place-content: center;
+    
+    /* The magic: conic gradient for the chart */
+    background: conic-gradient(var(--accent-color) calc(var(--p) * 1%), var(--chart-track-color) 0);
+    border-radius: 50%;
+    transition: --p 0.5s ease-in-out;
+}
+
+/* Inner circle to make it a donut chart */
+.chart::before {
+    content: "";
+    position: absolute;
+    border-radius: 50%;
+    inset: 10%;
+    background: var(--card-bg);
+}
+
+.percent-text {
+    position: relative; /* To bring it above the ::before pseudo-element */
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.card-info .card-title {
+    font-size: 16px;
+    color: var(--text-primary);
+}
+.card-info .card-subtitle {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+/* Generic cards for other stats */
+.generic-card {
+    grid-column: span 2;
+}
+
+.card-title-generic {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin-bottom: 16px;
+}
+
+.card-value-large {
+    font-size: 24px;
+    font-weight: 500;
+}
+
+.inline-stats {
+    margin-top: 16px;
+    font-size: 18px;
+    font-weight: 500;
+    display: flex;
+    gap: 24px;
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+.xray-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 500;
+}
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: var(--text-secondary);
+}
+.status-dot.running { background-color: var(--status-running); }
+.status-dot.stopped { background-color: var(--status-stopped); }
+
+.xray-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.xray-version {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.xray-buttons { display: flex; gap: 8px; }
+.xray-buttons button {
+    font-family: 'Vazirmatn', sans-serif;
+    background-color: #f1f5f9;
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+.xray-buttons button:hover { background-color: #e2e8f0; }
+.xray-buttons button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ip-list {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-top: 8px;
+    word-break: break-all;
+}
+.ip-list strong { color: var(--text-primary); font-weight: 500; }

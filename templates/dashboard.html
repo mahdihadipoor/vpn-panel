@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>داشبورد مدیریت</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <aside class="sidebar">
+            <h3>V-UI Panel</h3>
+            <nav>
+                <a href="#" class="active">Overview</a>
+                <a href="#">Inbounds</a>
+                <a href="#">Panel Settings</a>
+                <a href="#">Xray Config</a>
+            </nav>
+            <div class="logout">
+                <a href="#">Log Out</a>
+            </div>
+        </aside>
+        <main class="dashboard-grid">
+            <div class="stat-card resource-card">
+                <div class="chart" id="cpu-chart"><span class="percent-text">--%</span></div>
+                <div class="card-info">
+                    <div class="card-title">CPU</div>
+                    <div class="card-subtitle" id="cpu-cores">--</div>
+                </div>
+            </div>
+            <div class="stat-card resource-card">
+                <div class="chart" id="ram-chart"><span class="percent-text">--%</span></div>
+                <div class="card-info">
+                    <div class="card-title">RAM</div>
+                    <div class="card-subtitle" id="ram-usage">-- / -- GB</div>
+                </div>
+            </div>
+            <div class="stat-card resource-card">
+                <div class="chart" id="swap-chart"><span class="percent-text">--%</span></div>
+                <div class="card-info">
+                    <div class="card-title">Swap</div>
+                    <div class="card-subtitle" id="swap-usage">-- / -- GB</div>
+                </div>
+            </div>
+            <div class="stat-card resource-card">
+                <div class="chart" id="storage-chart"><span class="percent-text">--%</span></div>
+                <div class="card-info">
+                    <div class="card-title">Storage</div>
+                    <div class="card-subtitle" id="storage-usage">-- / -- GB</div>
+                </div>
+            </div>
+
+            <div class="stat-card generic-card">
+                <div class="card-header">
+                    <div class="card-title-generic">Xray</div>
+                    <div class="xray-status">
+                        <span class="status-dot" id="xray-status-dot"></span>
+                        <span id="xray-status-text">Checking...</span>
+                    </div>
+                </div>
+                <div class="xray-controls">
+                    <div class="xray-version" id="xray-version">Version: --</div>
+                    <div class="xray-buttons">
+                        <button id="xray-stop-btn" onclick="stopXray()">Stop</button>
+                        <button id="xray-restart-btn" onclick="restartXray()">Restart</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stat-card generic-card">
+                <div class="card-title-generic">IP Addresses</div>
+                <div class="ip-list">
+                    <strong>IPv4:</strong> <span id="ipv4-list">--</span>
+                </div>
+                <div class="ip-list">
+                    <strong>IPv6:</strong> <span id="ipv6-list">--</span>
+                </div>
+            </div>
+
+            <div class="stat-card generic-card">
+                <div class="card-title-generic">Overall Speed</div>
+                <div class="inline-stats">
+                    <div>↑ Upload: <span id="speed-upload">-- KB/s</span></div>
+                    <div>↓ Download: <span id="speed-download">-- KB/s</span></div>
+                </div>
+            </div>
+            <div class="stat-card generic-card">
+                <div class="card-title-generic">Total Data</div>
+                <div class="inline-stats">
+                    <div>↑ Sent: <span id="total-sent">-- GB</span></div>
+                    <div>↓ Received: <span id="total-received">-- GB</span></div>
+                </div>
+            </div>
+            <div class="stat-card generic-card">
+                <div class="card-title-generic">Uptime</div>
+                <div class="card-value-large"><span id="uptime">--:--:--</span></div>
+            </div>
+            <div class="stat-card generic-card">
+                <div class="card-title-generic">Connection Stats</div>
+                <div class="inline-stats">
+                    <div>TCP: <span id="conn-tcp">--</span></div>
+                    <div>UDP: <span id="conn-udp">--</span></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+<script>
+    function formatSpeed(bytes) {
+        if (bytes < 1024) return bytes.toFixed(2) + ' B/s';
+        else if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB/s';
+        else return (bytes / (1024 * 1024)).toFixed(2) + ' MB/s';
+    }
+
+    async function fetchStats() {
+        try {
+            const response = await fetch('/api/v1/system/stats');
+            if (!response.ok) return; // Don't update if server returns an error
+            const data = await response.json();
+
+            // --- Update Charts and Core Stats (unchanged) ---
+            const cpuChart = document.getElementById('cpu-chart');
+            cpuChart.style.setProperty('--p', data.cpu.percent);
+            cpuChart.querySelector('.percent-text').textContent = data.cpu.percent.toFixed(1) + '%';
+            const coreText = data.cpu.count > 1 ? 'Cores' : 'Core';
+            document.getElementById('cpu-cores').textContent = `CPU: ${data.cpu.count} ${coreText}`;
+            // ... (rest of the chart updates are unchanged) ...
+            const ramChart = document.getElementById('ram-chart');
+            ramChart.style.setProperty('--p', data.ram.percent);
+            ramChart.querySelector('.percent-text').textContent = data.ram.percent.toFixed(1) + '%';
+            document.getElementById('ram-usage').textContent = `${data.ram.used} / ${data.ram.total} GB`;
+            const swapChart = document.getElementById('swap-chart');
+            swapChart.style.setProperty('--p', data.swap.percent);
+            swapChart.querySelector('.percent-text').textContent = data.swap.percent.toFixed(1) + '%';
+            document.getElementById('swap-usage').textContent = `${data.swap.used} / ${data.swap.total} GB`;
+            const storageChart = document.getElementById('storage-chart');
+            storageChart.style.setProperty('--p', data.storage.percent);
+            storageChart.querySelector('.percent-text').textContent = data.storage.percent.toFixed(1) + '%';
+            document.getElementById('storage-usage').textContent = `${data.storage.used} / ${data.storage.total} GB`;
+            
+            // --- Update NEW Xray and IP data ---
+            const statusDot = document.getElementById('xray-status-dot');
+            const statusText = document.getElementById('xray-status-text');
+            if (data.xray.status === 'active') {
+                statusDot.className = 'status-dot running';
+                statusText.textContent = 'Running';
+                document.getElementById('xray-stop-btn').disabled = false;
+            } else {
+                statusDot.className = 'status-dot stopped';
+                statusText.textContent = 'Stopped';
+                // You might want a start button. For now, we'll just show it's stopped.
+                document.getElementById('xray-stop-btn').disabled = true;
+            }
+            document.getElementById('xray-version').textContent = data.xray.version;
+            document.getElementById('ipv4-list').textContent = data.ip_addresses.ipv4.join(', ') || 'N/A';
+            document.getElementById('ipv6-list').textContent = data.ip_addresses.ipv6.join(', ') || 'N/A';
+
+            // --- Update Other Stats (unchanged) ---
+            document.getElementById('speed-upload').textContent = formatSpeed(data.speed.upload);
+            document.getElementById('speed-download').textContent = formatSpeed(data.speed.download);
+            document.getElementById('total-sent').textContent = `${data.total_data.sent} GB`;
+            document.getElementById('total-received').textContent = `${data.total_data.received} GB`;
+            document.getElementById('uptime').textContent = data.uptime;
+            document.getElementById('conn-tcp').textContent = data.connections.tcp;
+            document.getElementById('conn-udp').textContent = data.connections.udp;
+
+        } catch (error) {
+            console.error("Error fetching system stats:", error);
+        }
+    }
+
+    // --- NEW functions for Xray control ---
+    async function controlXray(action) {
+        const buttons = document.querySelectorAll('.xray-buttons button');
+        buttons.forEach(b => b.disabled = true); // Disable buttons during action
+        try {
+            const response = await fetch(`/api/v1/xray/${action}`, { method: 'POST' });
+            if (!response.ok) {
+                alert(`Error: Failed to ${action} Xray.`);
+            }
+            await fetchStats(); // Immediately refresh stats after action
+        } catch (error) {
+            alert(`An error occurred: ${error}`);
+        } finally {
+            buttons.forEach(b => b.disabled = false); // Re-enable buttons
+        }
+    }
+    
+    function stopXray() { controlXray('stop'); }
+    function restartXray() { controlXray('restart'); }
+    // Note: A startXray function would be needed for a start button.
+
+    // Fetch stats on page load and then every half a second
+    fetchStats();
+    setInterval(fetchStats, 500);
+</script>
+</body>
+</html>
