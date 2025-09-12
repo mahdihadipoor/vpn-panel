@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Manage Clients - V-UI Panel</title>
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/inbounds.css"> </head>
+<body>
+    <div class="container">
+        <aside class="sidebar">
+            </aside>
+        <main class="inbounds-page">
+            <h1 id="page-title">Manage Clients for Inbound #...</h1>
+            <div class="action-bar">
+                <button class="btn btn-primary" id="add-client-btn">+ Add Client</button>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th><th>Remark (Email)</th><th>Enabled</th><th>UUID</th><th>Link</th><th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="clients-table-body"></tbody>
+                </table>
+            </div>
+        </main>
+    </div>
+    <div class="modal-overlay" id="add-client-modal">
+        <div class="modal-content">
+            <div class="modal-header"><h2>Add Client</h2><button class="close-modal-btn">&times;</button></div>
+            <form id="add-client-form">
+                <div class="modal-body">
+                    <div class="form-row">
+                        <label for="client-remark">Remark (Email)</label>
+                        <input type="text" id="client-remark" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary close-modal-btn">Close</button>
+                    <button type="submit" class="btn btn-primary">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const inboundId = window.location.pathname.split('/').pop();
+        document.getElementById('page-title').textContent = `Manage Clients for Inbound #${inboundId}`;
+
+        const modal = document.getElementById('add-client-modal');
+        const form = document.getElementById('add-client-form');
+
+        // ... (Modal handling logic is the same as inbounds.html) ...
+
+        const loadClients = async () => {
+            const response = await fetch(`/api/v1/inbounds/${inboundId}/clients`);
+            const clients = await response.json();
+            const tbody = document.getElementById('clients-table-body');
+            tbody.innerHTML = '';
+            clients.forEach(c => {
+                tbody.innerHTML += `
+                    <tr>
+                        <td>${c.id}</td>
+                        <td>${c.remark}</td>
+                        <td>${c.enabled ? 'On' : 'Off'}</td>
+                        <td>${c.uuid}</td>
+                        <td><a href="#" class="action-link" data-link="${c.config_link}">Copy Link</a></td>
+                        <td></td>
+                    </tr>
+                `;
+            });
+        };
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const data = { remark: document.getElementById('client-remark').value };
+            await fetch(`/api/v1/inbounds/${inboundId}/clients`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            // ... (close modal and reload list) ...
+            loadClients();
+        });
+        
+        loadClients();
+    });
+</script>
+</body>
+</html>

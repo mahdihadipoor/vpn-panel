@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inbounds - V-UI Panel</title>
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/inbounds.css">
+</head>
+<body>
+    <div class="container">
+        <aside class="sidebar">
+            <h3>V-UI Panel</h3>
+            <nav>
+                <a href="/dashboard">Overview</a>
+                <a href="/inbounds" class="active">Inbounds</a>
+                <a href="/panel-settings">Panel Settings</a>
+                <a href="#">Xray Config</a>
+            </nav>
+            <div class="logout">
+                <a href="#">Log Out</a>
+            </div>
+        </aside>
+
+        <main class="inbounds-page">
+            <h1>Inbounds</h1>
+            
+            <div class="action-bar">
+                <button class="btn btn-primary" id="add-inbound-btn">+ Add Inbound</button>
+            </div>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Remark</th>
+                            <th>Enabled</th>
+                            <th>Port</th>
+                            <th>Protocol</th>
+                            <th>Clients</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="inbounds-table-body">
+                        <tr>
+                            <td colspan="7" class="text-center">Loading inbounds...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </main>
+    </div>
+
+    <div class="modal-overlay" id="add-inbound-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Add Inbound</h2>
+                <button class="close-modal-btn" type="button">&times;</button>
+            </div>
+            <form id="add-inbound-form">
+                <div class="modal-body">
+                    <div class="form-row">
+                        <label for="remark">Remark</label>
+                        <input type="text" id="remark" placeholder="e.g., My-First-Inbound" required>
+                    </div>
+                    <div class="form-row">
+                        <label for="port">Port</label>
+                        <input type="number" id="port" placeholder="e.g., 42095" required>
+                    </div>
+                    <div class="form-row">
+                        <label for="protocol">Protocol</label>
+                        <input type="text" id="protocol" value="vless" disabled>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary close-modal-btn">Close</button>
+                    <button type="submit" class="btn btn-primary">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const modal = document.getElementById('add-inbound-modal');
+        const addInboundForm = document.getElementById('add-inbound-form');
+        const addInboundBtn = document.getElementById('add-inbound-btn');
+        const closeBtns = document.querySelectorAll('.close-modal-btn');
+
+        // --- Modal Handling (Unchanged) ---
+        const openModal = () => { modal.style.display = 'flex'; };
+        const closeModal = () => { modal.style.display = 'none'; };
+        addInboundBtn.addEventListener('click', openModal);
+        closeBtns.forEach(btn => btn.addEventListener('click', closeModal));
+        window.addEventListener('click', (e) => {
+            if (e.target === modal) { closeModal(); }
+        });
+
+        // --- Load Inbounds (UPDATED) ---
+        const loadInbounds = async () => {
+            try {
+                const response = await fetch('/api/v1/inbounds');
+                if (!response.ok) throw new Error('Network response was not ok');
+                const inbounds = await response.json();
+                
+                const tbody = document.getElementById('inbounds-table-body');
+                tbody.innerHTML = ''; 
+
+                if (inbounds.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-center">No inbounds found. Click "+ Add Inbound" to start.</td></tr>';
+                    return;
+                }
+
+                inbounds.forEach(ib => {
+                    const row = document.createElement('tr');
+                    // --- Row structure is updated to show client count and Manage button ---
+                    row.innerHTML = `
+                        <td>${ib.id}</td>
+                        <td>${ib.remark}</td>
+                        <td><span class="status ${ib.enabled ? 'enabled' : ''}">${ib.enabled ? 'On' : 'Off'}</span></td>
+                        <td>${ib.port}</td>
+                        <td><span class="protocol-tag">${ib.protocol}</span></td>
+                        <td>${ib.client_count}</td>
+                        <td>
+                            <a href="/inbounds/${ib.id}" class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;">Manage</a>
+                            <button class="btn-danger" data-id="${ib.id}">Delete</button>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            } catch (error) {
+                console.error("Failed to load inbounds:", error);
+                const tbody = document.getElementById('inbounds-table-body');
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center">Failed to load data.</td></tr>';
+            }
+        };
+
+        // --- Event Delegation for Actions (UPDATED) ---
+        document.getElementById('inbounds-table-body').addEventListener('click', (e) => {
+            // Note: The "Copy Link" logic is removed from this page, as links are now per-client.
+            if (e.target.classList.contains('btn-danger')) {
+                e.preventDefault();
+                deleteInbound(e.target.dataset.id);
+            }
+        });
+        
+        // --- Add Inbound (Unchanged) ---
+        addInboundForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const data = {
+                remark: document.getElementById('remark').value,
+                port: parseInt(document.getElementById('port').value)
+            };
+            try {
+                const response = await fetch('/api/v1/inbounds', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                if (response.ok) {
+                    closeModal();
+                    addInboundForm.reset();
+                    await loadInbounds();
+                } else {
+                    const error = await response.json();
+                    alert(`Error: ${error.detail || 'Could not create inbound.'}`);
+                }
+            } catch (error) {
+                console.error("Failed to create inbound:", error);
+                alert('A network error occurred.');
+            }
+        });
+
+        // --- Delete Inbound (Unchanged) ---
+        const deleteInbound = async (id) => {
+            if (!confirm(`Are you sure you want to delete inbound #${id}?`)) return;
+            try {
+                const response = await fetch(`/api/v1/inbounds/${id}`, { method: 'DELETE' });
+                if (response.ok) {
+                    await loadInbounds();
+                } else {
+                    alert('Failed to delete inbound.');
+                }
+            } catch (error) {
+                console.error("Failed to delete inbound:", error);
+                alert('A network error occurred.');
+            }
+        };
+    
+        // --- Initial Load ---
+        loadInbounds();
+    });
+</script>
+</body>
+</html>
