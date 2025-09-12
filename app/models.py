@@ -36,11 +36,11 @@ class Client(Base):
     uuid = Column(String, unique=True, nullable=False)
     enabled = Column(Boolean, default=True)
     
-    total_gb = Column(BigInteger, default=0)
-    expiry_time = Column(BigInteger, default=0)
+    total_gb = Column(BigInteger, default=0)    # For total traffic limit
+    expiry_time = Column(BigInteger, default=0) # For client expiry time (Unix timestamp)
     
-    up_traffic = Column(BigInteger, default=0)
-    down_traffic = Column(BigInteger, default=0)
+    up_traffic = Column(BigInteger, default=0)  # Total uploaded traffic by client
+    down_traffic = Column(BigInteger, default=0) # Total downloaded traffic by client
     
     inbound = relationship("Inbound", back_populates="clients")
 

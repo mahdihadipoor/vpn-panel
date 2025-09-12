@@ -6,6 +6,7 @@
     <title>Inbounds - V-UI Panel</title>
     <link rel="stylesheet" href="/static/css/base.css">
     <link rel="stylesheet" href="/static/css/inbounds.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 </head>
 <body>
     <div class="container">
@@ -24,29 +25,27 @@
 
         <main class="inbounds-page">
             <h1>Inbounds</h1>
-            
             <div class="action-bar">
                 <button class="btn btn-primary" id="add-inbound-btn">+ Add Inbound</button>
+                <button class="btn btn-secondary">General Actions</button>
             </div>
 
             <div class="table-container">
                 <table>
                     <thead>
                         <tr>
-                            <th>ID</th>
+                            <th style="width: 5%;"></th>
+                            <th style="width: 5%;">ID</th>
                             <th>Remark</th>
-                            <th>Enabled</th>
-                            <th>Port</th>
-                            <th>Protocol</th>
-                            <th>Clients</th>
-                            <th>Actions</th>
+                            <th style="width: 10%;">Enabled</th>
+                            <th style="width: 10%;">Port</th>
+                            <th style="width: 10%;">Protocol</th>
+                            <th style="width: 10%;">Clients</th>
+                            <th style="width: 15%;">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="inbounds-table-body">
-                        <tr>
-                            <td colspan="7" class="text-center">Loading inbounds...</td>
-                        </tr>
-                    </tbody>
+                        </tbody>
                 </table>
             </div>
         </main>
@@ -58,19 +57,15 @@
                 <h2>Add Inbound</h2>
                 <button class="close-modal-btn" type="button">&times;</button>
             </div>
-            <form id="add-inbound-form">
+            <form id="add-inbound-form" class="modal-form">
                 <div class="modal-body">
                     <div class="form-row">
-                        <label for="remark">Remark</label>
-                        <input type="text" id="remark" placeholder="e.g., My-First-Inbound" required>
+                        <label for="inbound-remark">Remark</label>
+                        <input type="text" id="inbound-remark" required>
                     </div>
                     <div class="form-row">
-                        <label for="port">Port</label>
-                        <input type="number" id="port" placeholder="e.g., 42095" required>
-                    </div>
-                    <div class="form-row">
-                        <label for="protocol">Protocol</label>
-                        <input type="text" id="protocol" value="vless" disabled>
+                        <label for="inbound-port">Port</label>
+                        <input type="number" id="inbound-port" required>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -81,116 +76,284 @@
         </div>
     </div>
 
-<script>
-    document.addEventListener('DOMContentLoaded', () => {
-        const modal = document.getElementById('add-inbound-modal');
-        const addInboundForm = document.getElementById('add-inbound-form');
-        const addInboundBtn = document.getElementById('add-inbound-btn');
-        const closeBtns = document.querySelectorAll('.close-modal-btn');
-
-        // --- Modal Handling (Unchanged) ---
-        const openModal = () => { modal.style.display = 'flex'; };
-        const closeModal = () => { modal.style.display = 'none'; };
-        addInboundBtn.addEventListener('click', openModal);
-        closeBtns.forEach(btn => btn.addEventListener('click', closeModal));
-        window.addEventListener('click', (e) => {
-            if (e.target === modal) { closeModal(); }
-        });
-
-        // --- Load Inbounds (UPDATED) ---
-        const loadInbounds = async () => {
-            try {
-                const response = await fetch('/api/v1/inbounds');
-                if (!response.ok) throw new Error('Network response was not ok');
-                const inbounds = await response.json();
-                
-                const tbody = document.getElementById('inbounds-table-body');
-                tbody.innerHTML = ''; 
-
-                if (inbounds.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="7" class="text-center">No inbounds found. Click "+ Add Inbound" to start.</td></tr>';
-                    return;
-                }
-
-                inbounds.forEach(ib => {
-                    const row = document.createElement('tr');
-                    // --- Row structure is updated to show client count and Manage button ---
-                    row.innerHTML = `
-                        <td>${ib.id}</td>
-                        <td>${ib.remark}</td>
-                        <td><span class="status ${ib.enabled ? 'enabled' : ''}">${ib.enabled ? 'On' : 'Off'}</span></td>
-                        <td>${ib.port}</td>
-                        <td><span class="protocol-tag">${ib.protocol}</span></td>
-                        <td>${ib.client_count}</td>
-                        <td>
-                            <a href="/inbounds/${ib.id}" class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;">Manage</a>
-                            <button class="btn-danger" data-id="${ib.id}">Delete</button>
-                        </td>
-                    `;
-                    tbody.appendChild(row);
-                });
-            } catch (error) {
-                console.error("Failed to load inbounds:", error);
-                const tbody = document.getElementById('inbounds-table-body');
-                tbody.innerHTML = '<tr><td colspan="7" class="text-center">Failed to load data.</td></tr>';
-            }
-        };
-
-        // --- Event Delegation for Actions (UPDATED) ---
-        document.getElementById('inbounds-table-body').addEventListener('click', (e) => {
-            // Note: The "Copy Link" logic is removed from this page, as links are now per-client.
-            if (e.target.classList.contains('btn-danger')) {
-                e.preventDefault();
-                deleteInbound(e.target.dataset.id);
-            }
-        });
-        
-        // --- Add Inbound (Unchanged) ---
-        addInboundForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const data = {
-                remark: document.getElementById('remark').value,
-                port: parseInt(document.getElementById('port').value)
-            };
-            try {
-                const response = await fetch('/api/v1/inbounds', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(data)
-                });
-                if (response.ok) {
-                    closeModal();
-                    addInboundForm.reset();
-                    await loadInbounds();
-                } else {
-                    const error = await response.json();
-                    alert(`Error: ${error.detail || 'Could not create inbound.'}`);
-                }
-            } catch (error) {
-                console.error("Failed to create inbound:", error);
-                alert('A network error occurred.');
-            }
-        });
-
-        // --- Delete Inbound (Unchanged) ---
-        const deleteInbound = async (id) => {
-            if (!confirm(`Are you sure you want to delete inbound #${id}?`)) return;
-            try {
-                const response = await fetch(`/api/v1/inbounds/${id}`, { method: 'DELETE' });
-                if (response.ok) {
-                    await loadInbounds();
-                } else {
-                    alert('Failed to delete inbound.');
-                }
-            } catch (error) {
-                console.error("Failed to delete inbound:", error);
-                alert('A network error occurred.');
-            }
-        };
+    <div class="modal-overlay" id="add-client-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Add Client</h2>
+                <button class="close-modal-btn" type="button">&times;</button>
+            </div>
+            <form id="add-client-form" class="modal-form">
+                <div class="modal-body">
+                    <input type="hidden" id="client-inbound-id">
+                    <div class="form-row">
+                        <label for="client-remark">Remark (Email)</label>
+                        <input type="text" id="client-remark" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary close-modal-btn">Close</button>
+                    <button type="submit" class="btn btn-primary">Create Client</button>
+                </div>
+            </form>
+        </div>
+    </div>
     
-        // --- Initial Load ---
-        loadInbounds();
+    <div class="modal-overlay" id="qr-code-modal">
+        <div class="modal-content qr-modal-content">
+            <div class="modal-header">
+                <h2 id="qr-code-remark">QR Code</h2>
+                <button class="close-modal-btn" type="button">&times;</button>
+            </div>
+            <div class="modal-body qr-modal-body" id="qr-code-container">
+                </div>
+        </div>
+    </div>
+
+<script src="https://cdn.rawgit.com/davidshimjs/qrcodejs/gh-pages/qrcode.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // --- STATE & CACHE ---
+    const clientCache = new Map();
+
+    // --- DOM ELEMENTS ---
+    const inboundsTbody = document.getElementById('inbounds-table-body');
+    const addInboundModal = document.getElementById('add-inbound-modal');
+    const addClientModal = document.getElementById('add-client-modal');
+    const qrCodeModal = document.getElementById('qr-code-modal');
+    const addInboundForm = document.getElementById('add-inbound-form');
+    const addClientForm = document.getElementById('add-client-form');
+
+    // --- MODAL HANDLING ---
+    const setupModal = (modal, openBtnId) => {
+        const openBtn = document.getElementById(openBtnId);
+        const closeBtns = modal.querySelectorAll('.close-modal-btn');
+        const show = () => modal.style.display = 'flex';
+        const hide = () => modal.style.display = 'none';
+        
+        openBtn?.addEventListener('click', show);
+        closeBtns.forEach(btn => btn.addEventListener('click', hide));
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) hide();
+        });
+        return { show, hide };
+    };
+    const inboundModal = setupModal(addInboundModal, 'add-inbound-btn');
+    const clientModal = setupModal(addClientModal, null);
+    const qrModal = setupModal(qrCodeModal, null);
+
+    // --- API HELPER ---
+    const apiCall = async (url, options = {}) => {
+        try {
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ detail: 'Failed to parse error response.' }));
+                throw new Error(errorData.detail);
+            }
+            // Handle responses that might not have a JSON body
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.indexOf("application/json") !== -1) {
+                return response.json();
+            }
+            return response.text();
+        } catch (error) {
+            console.error('API Call Failed:', error);
+            throw error;
+        }
+    };
+
+    // --- RENDER FUNCTIONS ---
+    const renderInbounds = (inbounds) => {
+        inboundsTbody.innerHTML = '';
+        if (inbounds.length === 0) {
+            inboundsTbody.innerHTML = '<tr><td colspan="8" class="text-center">No inbounds found.</td></tr>';
+            return;
+        }
+        inbounds.forEach(ib => {
+            inboundsTbody.innerHTML += `
+                <tr class="inbound-row" data-id="${ib.id}">
+                    <td><button class="expand-btn" data-action="expand">+</button></td>
+                    <td>${ib.id}</td>
+                    <td>${ib.remark}</td>
+                    <td><label class="switch"><input type="checkbox" ${ib.enabled ? 'checked' : ''}><span class="slider"></span></label></td>
+                    <td>${ib.port}</td>
+                    <td><span class="protocol-tag">${ib.protocol}</span></td>
+                    <td><span class="client-count">${ib.client_count}</span></td>
+                    <td>
+                        <button class="btn-danger btn-sm" data-action="delete-inbound">Delete</button>
+                    </td>
+                </tr>
+                <tr class="clients-row" id="clients-row-${ib.id}">
+                    <td colspan="8" class="clients-container"></td>
+                </tr>
+            `;
+        });
+    };
+
+    const renderClients = (inboundId, clients) => {
+        const container = document.querySelector(`#clients-row-${inboundId} .clients-container`);
+        let clientsHtml = `
+            <div class="clients-sub-table-wrapper">
+                <div class="sub-table-header">
+                    <h4>Clients</h4>
+                    <button class="btn btn-primary btn-sm" data-action="add-client">+ Add Client</button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Menu</th>
+                            <th>Enabled</th>
+                            <th>Online</th>
+                            <th>Client</th>
+                            <th>Link</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        if (clients.length > 0) {
+            clients.forEach(c => {
+                clientsHtml += `
+                    <tr class="client-row" data-id="${c.id}">
+                        <td>
+                            <div class="client-menu-icons">
+                                <i class="fas fa-qrcode" title="Show QR Code" data-action="show-qr" data-link="${c.config_link}" data-remark="${c.remark}"></i>
+                                <i class="fas fa-copy" title="Copy Link" data-action="copy-link" data-link="${c.config_link}"></i>
+                            </div>
+                        </td>
+                        <td><label class="switch"><input type="checkbox" ${c.enabled ? 'checked' : ''}><span class="slider"></span></label></td>
+                        <td><span class="online-status offline">Offline</span></td>
+                        <td>${c.remark}</td>
+                        <td><a href="#" class="action-link" data-action="copy-link" data-link="${c.config_link}">Copy</a></td>
+                        <td><button class="btn-danger btn-sm" data-action="delete-client">Delete</button></td>
+                    </tr>
+                `;
+            });
+        } else {
+            clientsHtml += '<tr><td colspan="6" class="text-center">No clients for this inbound.</td></tr>';
+        }
+        clientsHtml += '</tbody></table></div>';
+        container.innerHTML = clientsHtml;
+    };
+
+    // --- EVENT HANDLER ---
+    inboundsTbody.addEventListener('click', async (e) => {
+        const target = e.target;
+        const action = target.dataset.action;
+        const inboundRow = target.closest('.inbound-row');
+        const clientRow = target.closest('.client-row');
+
+        if (!action) return;
+        
+        const inboundId = inboundRow?.dataset.id || target.closest('.clients-sub-table-wrapper')?.parentElement.parentElement.previousElementSibling.dataset.id;
+        const clientId = clientRow?.dataset.id;
+
+        switch (action) {
+            case 'expand':
+                const clientsRow = document.getElementById(`clients-row-${inboundId}`);
+                const isOpening = !clientsRow.classList.contains('active');
+                
+                document.querySelectorAll('.clients-row.active').forEach(row => row.classList.remove('active'));
+                document.querySelectorAll('.expand-btn').forEach(btn => btn.textContent = '+');
+
+                if (isOpening) {
+                    clientsRow.classList.add('active');
+                    target.textContent = '−';
+                    if (!clientCache.has(inboundId)) {
+                        clientsRow.querySelector('.clients-container').innerHTML = '<div class="loader">Loading...</div>';
+                        const clients = await apiCall(`/api/v1/inbounds/${inboundId}/clients`);
+                        clientCache.set(inboundId, clients);
+                        renderClients(inboundId, clients);
+                    }
+                }
+                break;
+            case 'delete-inbound':
+                if (confirm(`Delete inbound #${inboundId}?`)) {
+                    await apiCall(`/api/v1/inbounds/${inboundId}`, { method: 'DELETE' });
+                    main();
+                }
+                break;
+            case 'add-client':
+                document.getElementById('client-inbound-id').value = inboundId;
+                clientModal.show();
+                break;
+            case 'delete-client':
+                 if (confirm(`Delete client #${clientId}?`)) {
+                    // This API endpoint needs to be created in main.py
+                    await apiCall(`/api/v1/clients/${clientId}`, { method: 'DELETE' });
+                    clientCache.delete(inboundId);
+                    document.querySelector(`.inbound-row[data-id='${inboundId}'] .expand-btn`).click(); // Re-open
+                    main(true); // Re-render inbounds to update client count
+                }
+                break;
+            case 'show-qr':
+                const link = target.dataset.link;
+                document.getElementById('qr-code-remark').textContent = `QR Code for ${target.dataset.remark}`;
+                const qrContainer = document.getElementById('qr-code-container');
+                qrContainer.innerHTML = '';
+                new QRCode(qrContainer, { text: link, width: 250, height: 250 });
+                qrModal.show();
+                break;
+            case 'copy-link':
+                navigator.clipboard.writeText(target.dataset.link).then(() => alert('Config link copied!'));
+                break;
+        }
     });
+
+    // --- FORM SUBMISSIONS ---
+    addInboundForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const data = {
+            remark: document.getElementById('inbound-remark').value,
+            port: parseInt(document.getElementById('inbound-port').value)
+        };
+        try {
+            await apiCall('/api/v1/inbounds', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
+            inboundModal.hide();
+            addInboundForm.reset();
+            main();
+        } catch (error) { alert(`Error: ${error.message}`); }
+    });
+
+    addClientForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const inboundId = document.getElementById('client-inbound-id').value;
+        const data = { remark: document.getElementById('client-remark').value };
+        try {
+            await apiCall(`/api/v1/inbounds/${inboundId}/clients`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
+            clientModal.hide();
+            addClientForm.reset();
+            clientCache.delete(inboundId);
+            const expandBtn = document.querySelector(`.inbound-row[data-id='${inboundId}'] .expand-btn`);
+            if (expandBtn) {
+                if (expandBtn.textContent === '−') {
+                    expandBtn.click(); // Close
+                    setTimeout(() => expandBtn.click(), 350); // and re-open
+                }
+            }
+            main(true);
+        } catch (error) { alert(`Error: ${error.message}`); }
+    });
+
+    // --- MAIN EXECUTION ---
+    const main = async (keepExpanded = false) => {
+        let expandedIds = new Set();
+        if (keepExpanded) {
+            document.querySelectorAll('.clients-row.active').forEach(row => expandedIds.add(row.id.replace('clients-row-', '')));
+        }
+        try {
+            const inbounds = await apiCall('/api/v1/inbounds');
+            renderInbounds(inbounds);
+            if (keepExpanded) {
+                expandedIds.forEach(id => {
+                    document.querySelector(`.inbound-row[data-id='${id}'] .expand-btn`)?.click();
+                });
+            }
+        } catch (error) {
+            inboundsTbody.innerHTML = `<tr><td colspan="8" class="text-center">Error: ${error.message}</td></tr>`;
+        }
+    };
+    main();
+});
 </script>
 </body>
 </html>

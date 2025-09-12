@@ -238,7 +238,21 @@ async def add_client_for_inbound(inbound_id: int, client_data: CreateClient, db:
         
     return new_client
 
-
+@app.delete("/api/v1/clients/{client_id}")
+async def remove_client(client_id: int, db: Session = Depends(get_db)):
+    db_client = db.query(crud.models.Client).filter(crud.models.Client.id == client_id).first()
+    if not db_client:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    
+    inbound_id = db_client.inbound_id # Get inbound ID before deleting client
+    
+    db.delete(db_client)
+    db.commit()
+    
+    if xray_manager.generate_config(db):
+        xray_manager.apply_config()
+        
+    return {"status": "success", "inbound_id": inbound_id}
 # --- API Routes ---
 
 @app.get("/api/v1/system/stats")
