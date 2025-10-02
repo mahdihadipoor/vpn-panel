@@ -4,7 +4,7 @@ from sqlalchemy import Column, Integer, String, Boolean, BigInteger, ForeignKey
 from .database import Base
 from sqlalchemy.orm import relationship
 
-# ... (User and Settings models remain unchanged) ...
+# ... (User model remains unchanged) ...
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
@@ -13,12 +13,13 @@ class User(Base):
 
 class Settings(Base):
     __tablename__ = "settings"
-    # ... (all settings fields remain unchanged) ...
+    
     id = Column(Integer, primary_key=True)
     listen_port = Column(Integer, default=443)
-    language = Column(String, default="en")
+    domain_name = Column(String, nullable=True, default="") # New field for domain
     public_key_path = Column(String, nullable=True, default="")
     private_key_path = Column(String, nullable=True, default="")
+    language = Column(String, default="en")
     time_zone = Column(String, default="Local")
     calendar_type = Column(String, default="Gregorian")
     notifications_enabled = Column(Boolean, default=False)
@@ -35,15 +36,14 @@ class Client(Base):
     uuid = Column(String, unique=True, nullable=False)
     enabled = Column(Boolean, default=True)
     
-    total_gb = Column(BigInteger, default=0)    # For total traffic limit
-    expiry_time = Column(BigInteger, default=0) # For client expiry time (Unix timestamp)
+    total_gb = Column(BigInteger, default=0)
+    expiry_time = Column(BigInteger, default=0)
     
-    up_traffic = Column(BigInteger, default=0)  # Total uploaded traffic by client
-    down_traffic = Column(BigInteger, default=0) # Total downloaded traffic by client
+    up_traffic = Column(BigInteger, default=0)
+    down_traffic = Column(BigInteger, default=0)
     
     inbound = relationship("Inbound", back_populates="clients")
 
-# --- INBOUND TABLE UPDATED ---
 class Inbound(Base):
     __tablename__ = "inbounds"
 
@@ -53,14 +53,8 @@ class Inbound(Base):
     port = Column(Integer, unique=True, nullable=False)
     protocol = Column(String, nullable=False)
     
-    # New fields for total traffic and expiry
-    total_gb = Column(BigInteger, default=0)
-    expiry_time = Column(BigInteger, default=0)
-
-    # This will now store inbound-specific settings (not clients)
     settings = Column(String, default='{}')
     stream_settings = Column(String, default='{}')
     sniffing_settings = Column(String, default='{}')
     
-    # Relationship to clients
     clients = relationship("Client", back_populates="inbound", cascade="all, delete-orphan")

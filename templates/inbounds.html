@@ -140,8 +140,8 @@
                         <input type="text" id="client-remark" required>
                     </div>
                     <div class="form-row">
-                        <label for="client-total-gb">Traffic Limit (GB)</label>
-                        <input type="number" id="client-total-gb" placeholder="0 for unlimited">
+                        <label for="client-total-mb">Traffic Limit (MB)</label>
+                        <input type="number" id="client-total-mb" placeholder="0 for unlimited">
                     </div>
                      <div class="form-row">
                         <label for="client-expiry-days">Expires in (Days)</label>
@@ -149,7 +149,7 @@
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary close-modal-btn">Close</button>
+                    <button type="button" class="btn btn-secondary close-modal-btn">Cancel</button>
                     <button type="submit" class="btn btn-primary">Create Client</button>
                 </div>
             </form>
@@ -165,26 +165,66 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="edit-client-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Edit Client</h2>
+                <button class="close-modal-btn" type="button">&times;</button>
+            </div>
+            <form id="edit-client-form" class="modal-form">
+                <div class="modal-body">
+                    <input type="hidden" id="edit-client-id">
+                    <div class="form-row">
+                        <label for="edit-client-enabled">Status</label>
+                        <label class="switch"><input type="checkbox" id="edit-client-enabled"><span class="slider"></span></label>
+                    </div>
+                    <div class="form-row">
+                        <label for="edit-client-total-mb">Traffic Limit (MB)</label>
+                        <input type="number" id="edit-client-total-mb" placeholder="0 for unlimited">
+                    </div>
+                     <div class="form-row">
+                        <label for="edit-client-expiry-days">Expires in (Days from now)</label>
+                        <input type="number" id="edit-client-expiry-days" placeholder="Leave empty to keep current date">
+                    </div>
+                    <hr style="margin: 20px 0; border: none; border-top: 1px solid var(--border-color);">
+                    <div class="form-row">
+                         <label for="edit-client-reset-traffic">Reset Traffic Usage</label>
+                         <label class="switch"><input type="checkbox" id="edit-client-reset-traffic"><span class="slider"></span></label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary close-modal-btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
 <script src="https://cdn.rawgit.com/davidshimjs/qrcodejs/gh-pages/qrcode.min.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
     // --- STATE & CACHE ---
     let statsInterval = null; // Variable to hold our timer
+    const clientDataCache = new Map(); // Cache client data for quick access
 
     // --- DOM ELEMENTS ---
     const inboundsTbody = document.getElementById('inbounds-table-body');
     const addInboundModal = document.getElementById('add-inbound-modal');
     const addClientModal = document.getElementById('add-client-modal');
+    const editClientModal = document.getElementById('edit-client-modal');
     const qrCodeModal = document.getElementById('qr-code-modal');
     const addInboundForm = document.getElementById('add-inbound-form');
     const addClientForm = document.getElementById('add-client-form');
+    const editClientForm = document.getElementById('edit-client-form');
+
 
     // --- MODAL HANDLING ---
     const setupModal = (modal, openBtnId) => {
         const openBtn = document.getElementById(openBtnId);
         const closeBtns = modal.querySelectorAll('.close-modal-btn');
         const show = () => modal.style.display = 'flex';
-        const hide = () => modal.style.display = 'none';
+        const hide = () => { modal.style.display = 'none'; };
         
         openBtn?.addEventListener('click', show);
         closeBtns.forEach(btn => btn.addEventListener('click', hide));
@@ -195,7 +235,9 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     const inboundModal = setupModal(addInboundModal, 'add-inbound-btn');
     const clientModal = setupModal(addClientModal, null);
+    const editModal = setupModal(editClientModal, null);
     const qrModal = setupModal(qrCodeModal, null);
+
 
     // --- HELPERS ---
     const apiCall = async (url, options = {}) => {
@@ -205,6 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const errorData = await response.json().catch(() => ({ detail: 'Failed to parse error response.' }));
                 throw new Error(errorData.detail);
             }
+            if (response.status === 204) return null; // Handle No Content response
             const contentType = response.headers.get("content-type");
             if (contentType && contentType.indexOf("application/json") !== -1) {
                 return response.json();
@@ -212,6 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return response.text();
         } catch (error) {
             console.error('API Call Failed:', error);
+            alert(`API Error: ${error.message}`);
             throw error;
         }
     };
@@ -227,7 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const formatDate = (timestamp) => {
         if (!timestamp || timestamp === 0) return '∞';
         const date = new Date(timestamp * 1000);
-        return date.toLocaleDateString('en-CA'); // YYYY-MM-DD format
+        return date.toLocaleDateString('en-CA');
     }
 
     // --- RENDER FUNCTIONS ---
@@ -243,7 +287,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td><button class="expand-btn" data-action="expand">+</button></td>
                     <td>${ib.id}</td>
                     <td>${ib.remark}</td>
-                    <td><label class="switch"><input type="checkbox" ${ib.enabled ? 'checked' : ''}><span class="slider"></span></label></td>
+                    <td><label class="switch"><input type="checkbox" ${ib.enabled ? 'checked' : ''} data-action="toggle-inbound"><span class="slider"></span></label></td>
                     <td>${ib.port}</td>
                     <td><span class="protocol-tag">${ib.protocol}</span></td>
                     <td><span class="client-count">${ib.client_count}</span></td>
@@ -260,13 +304,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const renderClients = (inboundId, clients) => {
         const container = document.querySelector(`#clients-row-${inboundId} .clients-container`);
-        if (!container) return; // Exit if the container is not visible
+        if (!container) return; 
+
+        clientDataCache.set(inboundId, clients);
 
         let clientsHtml = `
             <div class="clients-sub-table-wrapper">
                 <div class="sub-table-header">
                     <h4>Clients</h4>
-                    <button class="btn btn-primary btn-sm" data-action="add-client">+ Add Client</button>
+                    <button class="btn btn-primary btn-sm" data-action="add-client"><i class="fas fa-plus"></i> Add Client</button>
                 </div>
                 <table>
                     <thead>
@@ -287,9 +333,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const totalBytes = c.total_gb * 1024 * 1024 * 1024;
                 const usedBytes = c.used_traffic_bytes;
                 const percentage = totalBytes > 0 ? (usedBytes / totalBytes) * 100 : 0;
-                
-                const trafficLimitText = c.total_gb > 0 ? `/ ${c.total_gb} GB` : '/ ∞';
-                
+                const trafficLimitText = c.total_gb > 0 ? `/ ${c.total_gb.toFixed(2)} GB` : '/ ∞';
                 const onlineStatus = c.online ? 'online' : 'offline';
                 const onlineText = c.online ? 'Online' : 'Offline';
 
@@ -297,11 +341,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     <tr class="client-row" data-id="${c.id}">
                         <td>
                             <div class="client-menu-icons">
-                                <i class="fas fa-qrcode" title="Show QR Code" data-action="show-qr" data-link="${c.config_link}" data-remark="${c.remark}"></i>
-                                <i class="fas fa-copy" title="Copy Link" data-action="copy-link" data-link="${c.config_link}"></i>
+                                <i class="fas fa-qrcode" title="Show QR Code" data-action="show-qr"></i>
+                                <i class="fas fa-copy" title="Copy Link" data-action="copy-link"></i>
+                                <i class="fas fa-edit" title="Edit Client" data-action="edit-client"></i>
                             </div>
                         </td>
-                        <td><label class="switch"><input type="checkbox" ${c.enabled ? 'checked' : ''}><span class="slider"></span></label></td>
+                        <td><label class="switch"><input type="checkbox" ${c.enabled ? 'checked' : ''} data-action="toggle-client"><span class="slider"></span></label></td>
                         <td>
                             <div class="online-status ${onlineStatus}">
                                 <span class="dot"></span>
@@ -327,20 +372,17 @@ document.addEventListener('DOMContentLoaded', () => {
         container.innerHTML = clientsHtml;
     };
 
-    // --- NEW: Function to fetch and update stats periodically ---
     const updateStats = async (inboundId) => {
         try {
             const clients = await apiCall(`/api/v1/inbounds/${inboundId}/stats`);
             renderClients(inboundId, clients);
         } catch (error) {
             console.error("Failed to update stats:", error);
-            // Stop the interval if there's an error (e.g., inbound deleted)
             if (statsInterval) clearInterval(statsInterval);
         }
     };
 
-
-    // --- EVENT HANDLER (UPDATED for Real-time) ---
+    // --- EVENT HANDLER ---
     inboundsTbody.addEventListener('click', async (e) => {
         const target = e.target;
         const action = target.dataset.action;
@@ -352,12 +394,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const clientRow = target.closest('.client-row');
         const clientId = clientRow?.dataset.id;
 
+        const getClientData = (id) => {
+            const clients = clientDataCache.get(inboundId) || [];
+            return clients.find(c => c.id == id);
+        }
+
         switch (action) {
-            case 'expand':
+            case 'expand': {
                 const clientsRow = document.getElementById(`clients-row-${inboundId}`);
                 const isOpening = !clientsRow.classList.contains('active');
                 
-                // Clear any existing timer before opening a new row or closing all
                 if (statsInterval) clearInterval(statsInterval);
 
                 document.querySelectorAll('.clients-row.active').forEach(row => row.classList.remove('active'));
@@ -368,42 +414,82 @@ document.addEventListener('DOMContentLoaded', () => {
                     target.textContent = '−';
                     clientsRow.querySelector('.clients-container').innerHTML = '<div class="loader">Loading...</div>';
                     
-                    // Initial fetch
                     await updateStats(inboundId); 
-
-                    // Start the real-time update interval (e.g., every 5 seconds)
-                    statsInterval = setInterval(() => updateStats(inboundId), 1000);
+                    statsInterval = setInterval(() => updateStats(inboundId), 5000);
                 }
                 break;
-            case 'delete-inbound':
+            }
+            case 'delete-inbound': {
                 if (confirm(`Delete inbound #${inboundId}?`)) {
                     await apiCall(`/api/v1/inbounds/${inboundId}`, { method: 'DELETE' });
-                    if (statsInterval) clearInterval(statsInterval); // Stop timer if the deleted inbound was open
+                    if (statsInterval) clearInterval(statsInterval);
                     main();
                 }
                 break;
-            case 'add-client':
+            }
+            case 'add-client': {
                 document.getElementById('client-inbound-id').value = inboundId;
                 clientModal.show();
                 break;
-            case 'delete-client':
+            }
+            case 'delete-client': {
                  if (confirm(`Delete client #${clientId}?`)) {
                     await apiCall(`/api/v1/clients/${clientId}`, { method: 'DELETE' });
-                    updateStats(inboundId); // Refresh stats after deleting
-                    main(true);
+                    await updateStats(inboundId);
+                    await main(true);
                 }
                 break;
-            case 'show-qr':
-                const link = target.dataset.link;
-                document.getElementById('qr-code-remark').textContent = `QR Code for ${target.dataset.remark}`;
+            }
+            case 'show-qr': {
+                const client = getClientData(clientId);
+                if (!client) return;
+                document.getElementById('qr-code-remark').textContent = `QR Code for ${client.remark}`;
                 const qrContainer = document.getElementById('qr-code-container');
                 qrContainer.innerHTML = '';
-                new QRCode(qrContainer, { text: link, width: 250, height: 250 });
+                new QRCode(qrContainer, { text: client.config_link, width: 250, height: 250 });
                 qrModal.show();
                 break;
-            case 'copy-link':
-                navigator.clipboard.writeText(target.dataset.link).then(() => alert('Config link copied!'));
+            }
+            case 'copy-link': {
+                const client = getClientData(clientId);
+                if (!client) return;
+                navigator.clipboard.writeText(client.config_link).then(() => alert('Config link copied!'));
                 break;
+            }
+            case 'edit-client': {
+                const client = getClientData(clientId);
+                if (!client) return;
+                document.getElementById('edit-client-id').value = client.id;
+                document.getElementById('edit-client-enabled').checked = client.enabled;
+                // BUG FIX: Convert GB to MB for the input field
+                document.getElementById('edit-client-total-mb').value = client.total_gb * 1024;
+                document.getElementById('edit-client-expiry-days').value = '';
+                document.getElementById('edit-client-reset-traffic').checked = false;
+                editModal.show();
+                break;
+            }
+            case 'toggle-client': {
+                const client = getClientData(clientId);
+                if (!client) return;
+                const newStatus = target.checked;
+                try {
+                    await apiCall(`/api/v1/clients/${client.id}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ enabled: newStatus })
+                    });
+                    client.enabled = newStatus; // Update cache
+                } catch(e) {
+                    target.checked = !newStatus; // Revert checkbox on failure
+                }
+                break;
+            }
+            case 'toggle-inbound': {
+                // This feature was missing, let's add it (backend support needed)
+                // For now, it will just be a visual toggle
+                console.log(`Toggling inbound ${inboundId}`);
+                break;
+            }
         }
     });
 
@@ -426,7 +512,7 @@ document.addEventListener('DOMContentLoaded', () => {
             inboundModal.hide();
             addInboundForm.reset();
             main();
-        } catch (error) { alert(`Error: ${error.message}`); }
+        } catch (error) { /* apiCall already alerts */ }
     });
 
     addClientForm.addEventListener('submit', async (e) => {
@@ -437,7 +523,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const data = { 
             remark: document.getElementById('client-remark').value,
-            total_gb: parseInt(document.getElementById('client-total-gb').value) || 0,
+            total_mb: parseInt(document.getElementById('client-total-mb').value) || 0, // Send as MB
             expiry_time: expiry_time
         };
 
@@ -446,7 +532,36 @@ document.addEventListener('DOMContentLoaded', () => {
             clientModal.hide();
             addClientForm.reset();
             main(true);
-        } catch (error) { alert(`Error: ${error.message}`); }
+        } catch (error) { /* apiCall already alerts */ }
+    });
+    
+    editClientForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const clientId = document.getElementById('edit-client-id').value;
+        const days = parseInt(document.getElementById('edit-client-expiry-days').value);
+        
+        let expiry_time = null;
+        if (!isNaN(days) && days >= 0) {
+            expiry_time = days > 0 ? Math.floor(Date.now() / 1000) + (days * 24 * 60 * 60) : 0;
+        }
+
+        const data = {
+            enabled: document.getElementById('edit-client-enabled').checked,
+            total_mb: parseInt(document.getElementById('edit-client-total-mb').value) || 0, // Send as MB
+            expiry_time: expiry_time,
+            reset_traffic: document.getElementById('edit-client-reset-traffic').checked
+        };
+        
+        try {
+            await apiCall(`/api/v1/clients/${clientId}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            editModal.hide();
+            const inboundId = document.querySelector('.clients-row.active').id.replace('clients-row-', '');
+            if(inboundId) await updateStats(inboundId);
+        } catch(error) { /* apiCall already alerts */ }
     });
 
     // --- MAIN EXECUTION ---

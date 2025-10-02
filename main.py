@@ -22,7 +22,6 @@ from typing import List, Optional
 
 from app import crud, security
 from app.database import SessionLocal, create_db_and_tables
-# Ensure you have regenerated these files as per the previous instructions
 from app.xray_api import stats_pb2, stats_pb2_grpc
 
 create_db_and_tables()
@@ -41,7 +40,6 @@ last_time = time.time()
 # --- Xray API Client ---
 def get_xray_stats(emails: List[str]):
     try:
-        # The API inbound is now on port 62789 as per the working config
         channel = grpc.insecure_channel('127.0.0.1:62789')
         stub = stats_pb2_grpc.StatsServiceStub(channel)
         
@@ -71,7 +69,6 @@ def get_xray_stats(emails: List[str]):
         return {}
 
 def get_server_public_ip():
-    """Finds the first non-local public IPv4 address of the server."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -85,13 +82,7 @@ def get_server_public_ip():
 # --- Helper functions for system interaction ---
 def run_shell_command(command):
     try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            check=True,
-            capture_output=True,
-            text=True
-        )
+        result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
         print(f"Error executing command: {e.stderr.strip()}")
@@ -120,11 +111,7 @@ async def read_root():
     return FileResponse(str(Path(BASE_DIR, 'templates', 'login.html')))
 
 @app.post("/login")
-async def login(
-    db: Session = Depends(get_db),
-    username: str = Form(...),
-    password: str = Form(...)
-):
+async def login(db: Session = Depends(get_db), username: str = Form(...), password: str = Form(...)):
     user = crud.get_user_by_username(db, username=username)
     if not user or not security.verify_password(password, user.hashed_password):
         return JSONResponse(status_code=401, content={"message": "نام کاربری یا رمز عبور اشتباه است"})
@@ -144,10 +131,12 @@ async def get_inbounds_page():
 
 @app.get("/inbounds/{inbound_id}", response_class=HTMLResponse)
 async def get_clients_page(inbound_id: int):
-    # This route will serve the new clients.html page
     return FileResponse(str(Path(BASE_DIR, 'templates', 'clients.html')))
 
-# --- XRAY CONFIG MANAGER (BASED ON WORKING CONFIG) ---
+class DomainInfo(BaseModel):
+    domain_name: str
+        
+# --- XRAY CONFIG MANAGER ---
 class XrayManager:
     def __init__(self, config_path="/usr/local/etc/xray/config.json"):
         self.config_path = config_path
@@ -155,41 +144,22 @@ class XrayManager:
     def generate_config(self, db: Session):
         config = {
             "log": { "loglevel": "warning" },
-            "api": {
-                "tag": "api",
-                "services": ["StatsService"]
-            },
+            "api": { "tag": "api", "services": ["StatsService"] },
             "stats": {},
             "policy": {
-                "levels": {
-                    "0": { "statsUserUplink": True, "statsUserDownlink": True }
-                },
+                "levels": { "0": { "statsUserUplink": True, "statsUserDownlink": True } },
                 "system": { "statsInboundUplink": True, "statsInboundDownlink": True }
             },
             "inbounds": [
-                # Dedicated inbound for the API
-                {
-                    "tag": "api",
-                    "listen": "127.0.0.1",
-                    "port": 62789,
-                    "protocol": "dokodemo-door",
-                    "settings": { "address": "127.0.0.1" }
-                }
+                { "tag": "api", "listen": "127.0.0.1", "port": 62789, "protocol": "dokodemo-door", "settings": { "address": "127.0.0.1" } }
             ],
             "outbounds": [
                 { "protocol": "freedom", "tag": "direct" },
-                # Dedicated outbound for the API
                 { "protocol": "blackhole", "tag": "api" }
             ],
             "routing": {
                 "domainStrategy": "AsIs",
-                "rules": [
-                    {
-                        "type": "field",
-                        "inboundTag": ["api"],
-                        "outboundTag": "api"
-                    }
-                ]
+                "rules": [ { "type": "field", "inboundTag": ["api"], "outboundTag": "api" } ]
             }
         }
         
@@ -214,10 +184,7 @@ class XrayManager:
                 "port": inbound.port,
                 "listen": "0.0.0.0",
                 "protocol": inbound.protocol,
-                "settings": {
-                    "clients": xray_clients,
-                    "decryption": "none"
-                },
+                "settings": { "clients": xray_clients, "decryption": "none" },
                 "streamSettings": stream_settings,
                 "tag": f"inbound-{inbound.port}"
             }
@@ -251,25 +218,28 @@ class CreateInbound(BaseModel):
     port: int
     protocol: str = "vless"
     stream_settings: StreamSettings
-    total_gb: int = Field(0, ge=0)
-    expiry_time: int = Field(0, ge=0)
 
+class UpdateInbound(BaseModel):
+    enabled: Optional[bool] = None
 
 class CreateClient(BaseModel):
     remark: str
-    total_gb: int = Field(0, ge=0)
+    total_mb: int = Field(0, ge=0)
     expiry_time: int = Field(0, ge=0)
 
-# --- INBOUND APIs ---
+class UpdateClient(BaseModel):
+    enabled: Optional[bool] = None
+    total_mb: Optional[int] = Field(None, ge=0)
+    expiry_time: Optional[int] = Field(None, ge=0)
+    reset_traffic: Optional[bool] = False
+
+# --- INBOUND APIs (FIXED) ---
 @app.get("/api/v1/inbounds")
 async def read_inbounds(db: Session = Depends(get_db)):
     inbounds = crud.get_inbounds(db)
     for ib in inbounds:
         ib.client_count = len(ib.clients)
-        if ib.expiry_time > 0:
-            ib.expiry_date = datetime.datetime.fromtimestamp(ib.expiry_time).strftime('%Y-%m-%d')
-        else:
-            ib.expiry_date = "Unlimited"
+        # The erroneous lines that checked for 'ib.expiry_time' have been removed.
     return inbounds
 
 @app.post("/api/v1/inbounds")
@@ -285,10 +255,21 @@ async def add_inbound(inbound_data: CreateInbound, db: Session = Depends(get_db)
     if xray_manager.generate_config(db):
         xray_manager.apply_config()
     else:
-        # If config generation fails, report an error
         raise HTTPException(status_code=500, detail="Failed to generate Xray config file.")
         
     return new_inbound
+
+@app.put("/api/v1/inbounds/{inbound_id}")
+async def update_inbound_data(inbound_id: int, inbound_data: UpdateInbound, db: Session = Depends(get_db)):
+    updated_inbound = crud.update_inbound(db, inbound_id, {"enabled": inbound_data.enabled})
+    if not updated_inbound:
+        raise HTTPException(status_code=404, detail="Inbound not found")
+
+    if xray_manager.generate_config(db):
+        xray_manager.apply_config()
+    
+    return updated_inbound
+
 
 @app.delete("/api/v1/inbounds/{inbound_id}")
 async def remove_inbound(inbound_id: int, db: Session = Depends(get_db)):
@@ -308,6 +289,9 @@ async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
     live_stats = get_xray_stats(client_emails)
     
     traffic_to_update = {}
+    needs_reload = False
+    now = int(time.time())
+
     for client in clients:
         stats = live_stats.get(client.remark)
         if stats:
@@ -317,9 +301,27 @@ async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
             client.online = (stats['up'] > 0 or stats['down'] > 0)
         else:
             client.online = False
+
+        if client.enabled:
+            total_used = client.up_traffic + client.down_traffic
+            limit_bytes = client.total_gb * 1024 * 1024 * 1024
+
+            if limit_bytes > 0 and total_used >= limit_bytes:
+                client.enabled = False
+                needs_reload = True
+                crud.update_client(db, client.id, {"enabled": False})
+
+            elif client.expiry_time > 0 and now >= client.expiry_time:
+                client.enabled = False
+                needs_reload = True
+                crud.update_client(db, client.id, {"enabled": False})
     
     if traffic_to_update:
         crud.update_clients_traffic(db, traffic_to_update)
+
+    if needs_reload:
+        if xray_manager.generate_config(db):
+            xray_manager.apply_config()
 
     updated_clients = crud.get_clients_for_inbound(db, inbound_id)
     server_ip = get_server_public_ip()
@@ -347,11 +349,13 @@ async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/v1/inbounds/{inbound_id}/clients")
 async def add_client_for_inbound(inbound_id: int, client_data: CreateClient, db: Session = Depends(get_db)):
+    total_gb = client_data.total_mb / 1024 if client_data.total_mb > 0 else 0
+    
     new_client = crud.create_client(
         db, 
         inbound_id=inbound_id, 
         remark=client_data.remark,
-        total_gb=client_data.total_gb,
+        total_gb=total_gb,
         expiry_time=client_data.expiry_time
     )
     
@@ -362,18 +366,41 @@ async def add_client_for_inbound(inbound_id: int, client_data: CreateClient, db:
 
 @app.delete("/api/v1/clients/{client_id}")
 async def remove_client(client_id: int, db: Session = Depends(get_db)):
-    db_client = db.query(crud.models.Client).filter(crud.models.Client.id == client_id).first()
+    db_client = crud.get_client_by_id(db, client_id)
     if not db_client:
         raise HTTPException(status_code=404, detail="Client not found.")
     
-    inbound_id = db_client.inbound_id
     db.delete(db_client)
     db.commit()
     
     if xray_manager.generate_config(db):
         xray_manager.apply_config()
         
-    return {"status": "success", "inbound_id": inbound_id}
+    return {"status": "success"}
+
+@app.put("/api/v1/clients/{client_id}")
+async def update_client_data(client_id: int, client_data: UpdateClient, db: Session = Depends(get_db)):
+    update_data = client_data.dict(exclude_unset=True)
+    
+    if client_data.total_mb is not None:
+        update_data["total_gb"] = client_data.total_mb / 1024
+        del update_data["total_mb"]
+    
+    if client_data.reset_traffic:
+        update_data["up_traffic"] = 0
+        update_data["down_traffic"] = 0
+    
+    update_data.pop("reset_traffic", None)
+
+    updated_client = crud.update_client(db, client_id, update_data)
+    if not updated_client:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    
+    if 'enabled' in update_data:
+        if xray_manager.generate_config(db):
+            xray_manager.apply_config()
+
+    return updated_client
 
 # --- System & Panel API Routes (Unchanged) ---
 @app.get("/api/v1/system/stats")
@@ -443,6 +470,26 @@ async def write_settings(settings_data: dict = Body(...), db: Session = Depends(
     if not updated_settings:
         raise HTTPException(status_code=404, detail="Settings not found.")
     return {"status": "success", "message": "Settings saved successfully."}
+
+@app.post("/api/v1/panel/get-certificate")
+async def get_certificate(domain_info: DomainInfo, db: Session = Depends(get_db)):
+    domain = domain_info.domain_name.strip()
+    if not domain:
+        raise HTTPException(status_code=400, detail="Domain name cannot be empty.")
+    command = f"sudo certbot certonly --standalone -d {domain} --non-interactive --agree-tos --email admin@{domain}"
+    try:
+        subprocess.run(command, shell=True, check=True, capture_output=True, text=True, timeout=300)
+        cert_path = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
+        key_path = f"/etc/letsencrypt/live/{domain}/privkey.pem"
+        if os.path.exists(cert_path) and os.path.exists(key_path):
+            crud.update_settings(db, {"domain_name": domain, "public_key_path": cert_path, "private_key_path": key_path})
+            return {"status": "success", "message": "Certificate obtained successfully! Please restart the panel."}
+        else:
+            raise HTTPException(status_code=500, detail="Certificate files not found after certbot run.")
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Certbot failed: {e.stderr.strip()}")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="Certbot command timed out.")
 
 @app.post("/api/v1/panel/restart")
 async def restart_panel():

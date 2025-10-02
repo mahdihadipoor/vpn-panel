@@ -16,7 +16,7 @@
             <h3>V-UI Panel</h3>
             <nav>
                 <a href="/dashboard">Overview</a>
-                <a href="#">Inbounds</a>
+                <a href="/inbounds">Inbounds</a>
                 <a href="/panel-settings" class="active">Panel Settings</a>
                 <a href="#">Xray Config</a>
             </nav>
@@ -30,9 +30,9 @@
                     <h1>Panel Settings</h1>
                     <div class="header-actions">
                         <div id="restart-banner" class="restart-banner hidden">
-                            <span>Every change made here needs to be saved. Please restart the panel to apply changes.</span>
+                            <span>Changes saved. Please restart the panel to apply.</span>
                         </div>
-                        <button class="save-btn" onclick="saveSettings()">Save</button>
+                        <button class="save-btn" onclick="saveSettings()">Save Changes</button>
                         <button class="restart-btn" onclick="restartPanel()">Restart Panel</button>
                     </div>
                 </div>
@@ -60,15 +60,32 @@
                             </div>
                         </div>
                     </div>
+                    
                     <div class="accordion-item">
                         <div class="accordion-header">
-                            <span class="chevron"></span> <h3>Notifications</h3>
+                            <span class="chevron"></span> <h3>Domain & SSL</h3>
                         </div>
-                        <div class="accordion-body"></div>
+                        <div class="accordion-body">
+                            <div class="form-group">
+                                <div>
+                                    <input type="text" id="domain_name" placeholder="example.com">
+                                    <p class="helper-text">Enter your domain name here. Ensure it points to this server's IP.</p>
+                                </div>
+                                <label for="domain_name">Domain Name</label>
+                            </div>
+                             <div class="form-group">
+                                <div>
+                                    <button class="btn btn-primary" onclick="getCertificate()">Get & Apply Certificate</button>
+                                    <p class="helper-text" id="cert-status">Important: Port 80 must be free to obtain the certificate.</p>
+                                </div>
+                                <label>Automatic SSL</label>
+                            </div>
+                        </div>
                     </div>
+
                     <div class="accordion-item">
                         <div class="accordion-header">
-                            <span class="chevron"></span> <h3>Certificates</h3>
+                            <span class="chevron"></span> <h3>Certificates (Manual)</h3>
                         </div>
                         <div class="accordion-body">
                             <div class="form-group">
@@ -87,12 +104,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="accordion-item">
-                        <div class="accordion-header">
-                           <span class="chevron"></span> <h3>External Traffic</h3>
-                        </div>
-                        <div class="accordion-body"></div>
-                    </div>
+                    
                     <div class="accordion-item">
                         <div class="accordion-header">
                            <span class="chevron"></span> <h3>Date and Time</h3>
@@ -129,6 +141,7 @@
             
             document.getElementById('listen_port').value = data.listen_port;
             document.getElementById('language').value = data.language;
+            document.getElementById('domain_name').value = data.domain_name || ''; // Load domain name
             document.getElementById('public_key_path').value = data.public_key_path || '';
             document.getElementById('private_key_path').value = data.private_key_path || '';
             document.getElementById('time_zone').value = data.time_zone;
@@ -144,43 +157,92 @@
         const settingsData = {
             listen_port: parseInt(document.getElementById('listen_port').value, 10),
             language: document.getElementById('language').value,
+            domain_name: document.getElementById('domain_name').value.trim(), // Save domain name
             public_key_path: document.getElementById('public_key_path').value,
             private_key_path: document.getElementById('private_key_path').value,
             time_zone: document.getElementById('time_zone').value,
             calendar_type: document.getElementById('calendar_type').value
         };
 
-        const response = await fetch('/api/v1/panel/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(settingsData)
-        });
+        try {
+            const response = await fetch('/api/v1/panel/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settingsData)
+            });
 
-        if(response.ok) {
-            alert('Settings saved successfully! Please restart the panel to apply.');
-            isDirty = false;
-        } else {
-            alert('Error saving settings.');
+            if(response.ok) {
+                alert('Settings saved successfully! Please restart the panel to apply changes related to port, domain or SSL.');
+                isDirty = false; // Reset dirty flag after saving
+                restartBanner.classList.add('hidden'); // Hide banner after saving
+            } else {
+                const errorData = await response.json();
+                alert(`Error saving settings: ${errorData.detail || 'Unknown error'}`);
+            }
+        } catch (e) {
+            alert('An unexpected error occurred while saving.');
+        }
+    }
+    
+    // NEW function to get certificate
+    async function getCertificate() {
+        const domain = document.getElementById('domain_name').value.trim();
+        if (!domain) {
+            alert('Please enter a domain name first.');
+            return;
+        }
+
+        const statusEl = document.getElementById('cert-status');
+        const originalButtonText = event.target.innerHTML;
+        event.target.innerHTML = 'Requesting...';
+        event.target.disabled = true;
+        statusEl.textContent = 'Requesting certificate... This may take a few minutes. Please wait.';
+        
+        try {
+            const response = await fetch('/api/v1/panel/get-certificate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ domain_name: domain })
+            });
+            const result = await response.json();
+
+            if (response.ok) {
+                statusEl.textContent = 'Success! Certificate obtained. Restart the panel to apply.';
+                alert(result.message);
+                await loadSettings(); // Reload settings to show new paths
+                showRestartBanner();
+            } else {
+                statusEl.textContent = `Error: ${result.detail}`;
+                alert(`Error: ${result.detail}`);
+            }
+        } catch (error) {
+            statusEl.textContent = 'An unexpected error occurred. Check the panel logs for more details.';
+            console.error('Failed to get certificate:', error);
+        } finally {
+            event.target.innerHTML = originalButtonText;
+            event.target.disabled = false;
         }
     }
 
+
     async function restartPanel() {
         if (isDirty) {
-            if (!confirm('You have unsaved changes. Are you sure you want to restart?')) { return; }
+            if (!confirm('You have unsaved changes that will be lost. Are you sure you want to restart?')) { return; }
         }
         alert('Panel is restarting... Please wait a few moments and then refresh your browser.');
-        await fetch('/api/v1/panel/restart', { method: 'POST' });
+        try {
+            await fetch('/api/v1/panel/restart', { method: 'POST' });
+            // The server will restart, so the user needs to manually refresh after a delay.
+        } catch (e) {
+            // This error is expected as the server connection is lost during restart
+            console.log("Restart command sent.");
+        }
     }
 
     // Accordion Logic
     document.querySelectorAll('.accordion-header').forEach(header => {
         header.addEventListener('click', () => {
-            const currentlyActive = document.querySelector('.accordion-item.active');
             const clickedItem = header.parentElement;
-
-            if (currentlyActive && currentlyActive !== clickedItem) {
-                currentlyActive.classList.remove('active');
-            }
             clickedItem.classList.toggle('active');
         });
     });
