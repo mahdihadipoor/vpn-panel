@@ -22,6 +22,7 @@ from typing import List, Optional
 
 from app import crud, security
 from app.database import SessionLocal, create_db_and_tables
+# Ensure you have regenerated these files as per the previous instructions
 from app.xray_api import stats_pb2, stats_pb2_grpc
 
 create_db_and_tables()
@@ -40,26 +41,33 @@ last_time = time.time()
 # --- Xray API Client ---
 def get_xray_stats(emails: List[str]):
     try:
-        channel = grpc.insecure_channel('127.0.0.1:8081')
+        # The API inbound is now on port 62789 as per the working config
+        channel = grpc.insecure_channel('127.0.0.1:62789')
         stub = stats_pb2_grpc.StatsServiceStub(channel)
         
         traffic_data = {}
-        for email in emails:
-            # Uplink
-            req_up = stats_pb2.GetStatsRequest(name=f"user>>>{email}>>>traffic>>>uplink", reset=True)
-            res_up = stub.GetStats(req_up)
-            
-            # Downlink
-            req_down = stats_pb2.GetStatsRequest(name=f"user>>>{email}>>>traffic>>>downlink", reset=True)
-            res_down = stub.GetStats(req_down)
-            
-            traffic_data[email] = {
-                'up': res_up.stat.value,
-                'down': res_down.stat.value
-            }
+        
+        req = stats_pb2.QueryStatsRequest(pattern="user>>>", reset=True)
+        res = stub.QueryStats(req)
+        
+        for stat in res.stat:
+            parts = stat.name.split('>>>')
+            if len(parts) == 4 and parts[0] == 'user':
+                email = parts[1]
+                direction = parts[3]
+                value = stat.value
+
+                if email not in traffic_data:
+                    traffic_data[email] = {'up': 0, 'down': 0}
+                
+                if direction == 'uplink':
+                    traffic_data[email]['up'] += value
+                elif direction == 'downlink':
+                    traffic_data[email]['down'] += value
+        
         return traffic_data
     except Exception as e:
-        print(f"Error connecting to Xray API: {e}")
+        print(f"Could not connect to Xray API: {e}")
         return {}
 
 def get_server_public_ip():
@@ -139,50 +147,66 @@ async def get_clients_page(inbound_id: int):
     # This route will serve the new clients.html page
     return FileResponse(str(Path(BASE_DIR, 'templates', 'clients.html')))
 
-# --- XRAY CONFIG MANAGER (FINAL STABLE VERSION) ---
+# --- XRAY CONFIG MANAGER (BASED ON WORKING CONFIG) ---
 class XrayManager:
     def __init__(self, config_path="/usr/local/etc/xray/config.json"):
         self.config_path = config_path
 
     def generate_config(self, db: Session):
-        # Base configuration structure, compatible with older Xray versions
         config = {
             "log": { "loglevel": "warning" },
             "api": {
                 "tag": "api",
-                "services": ["StatsService"],
-                "listen": "127.0.0.1",
-                "port": 8081
+                "services": ["StatsService"]
             },
             "stats": {},
-            "routing": {
-                "rules": [
-                    {"type": "field", "inboundTag": "api", "outboundTag": "api"}
-                ]
+            "policy": {
+                "levels": {
+                    "0": { "statsUserUplink": True, "statsUserDownlink": True }
+                },
+                "system": { "statsInboundUplink": True, "statsInboundDownlink": True }
             },
-            "inbounds": [],
+            "inbounds": [
+                # Dedicated inbound for the API
+                {
+                    "tag": "api",
+                    "listen": "127.0.0.1",
+                    "port": 62789,
+                    "protocol": "dokodemo-door",
+                    "settings": { "address": "127.0.0.1" }
+                }
+            ],
             "outbounds": [
-                {"protocol": "freedom"},
-                {"protocol": "blackhole", "tag": "block"}
-            ]
+                { "protocol": "freedom", "tag": "direct" },
+                # Dedicated outbound for the API
+                { "protocol": "blackhole", "tag": "api" }
+            ],
+            "routing": {
+                "domainStrategy": "AsIs",
+                "rules": [
+                    {
+                        "type": "field",
+                        "inboundTag": ["api"],
+                        "outboundTag": "api"
+                    }
+                ]
+            }
         }
         
         all_inbounds = crud.get_inbounds(db)
 
         for inbound in all_inbounds:
-            if not inbound.enabled:
-                continue
+            if not inbound.enabled: continue
 
             clients_for_this_inbound = crud.get_clients_for_inbound(db, inbound.id)
             
             xray_clients = []
             if inbound.protocol == "vless":
-                xray_clients = [{"id": c.uuid, "email": c.remark} for c in clients_for_this_inbound if c.enabled]
+                xray_clients = [{"id": c.uuid, "email": c.remark, "level": 0} for c in clients_for_this_inbound if c.enabled]
             elif inbound.protocol == "vmess":
-                xray_clients = [{"id": c.uuid, "alterId": 0, "email": c.remark} for c in clients_for_this_inbound if c.enabled]
+                xray_clients = [{"id": c.uuid, "alterId": 0, "email": c.remark, "level": 0} for c in clients_for_this_inbound if c.enabled]
             
-            if not xray_clients:
-                continue
+            if not xray_clients: continue
 
             stream_settings = json.loads(inbound.stream_settings)
 
@@ -195,17 +219,14 @@ class XrayManager:
                     "decryption": "none"
                 },
                 "streamSettings": stream_settings,
-                "sniffing": {
-                    "enabled": True,
-                    "destOverride": ["http", "tls"]
-                }
+                "tag": f"inbound-{inbound.port}"
             }
             config["inbounds"].append(xray_inbound)
         
         try:
             with open(self.config_path, 'w') as f:
                 json.dump(config, f, indent=4)
-            print("Successfully generated final stable Xray config.")
+            print("Successfully generated config based on working example.")
             return True
         except Exception as e:
             print(f"FATAL: Error writing Xray config: {e}")
@@ -264,6 +285,7 @@ async def add_inbound(inbound_data: CreateInbound, db: Session = Depends(get_db)
     if xray_manager.generate_config(db):
         xray_manager.apply_config()
     else:
+        # If config generation fails, report an error
         raise HTTPException(status_code=500, detail="Failed to generate Xray config file.")
         
     return new_inbound
@@ -276,24 +298,19 @@ async def remove_inbound(inbound_id: int, db: Session = Depends(get_db)):
         return {"status": "success"}
     raise HTTPException(status_code=404, detail="Inbound not found.")
 
-# --- CLIENT APIs (UPDATED) ---
-
-# NEW ENDPOINT to get live stats
+# --- CLIENT APIs ---
 @app.get("/api/v1/inbounds/{inbound_id}/stats")
 async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
     clients = crud.get_clients_for_inbound(db, inbound_id)
-    if not clients:
-        return []
+    if not clients: return []
         
     client_emails = [c.remark for c in clients]
     live_stats = get_xray_stats(client_emails)
     
-    # Prepare data for bulk update
     traffic_to_update = {}
     for client in clients:
         stats = live_stats.get(client.remark)
         if stats:
-            # Accumulate traffic
             client.up_traffic += stats['up']
             client.down_traffic += stats['down']
             traffic_to_update[str(client.id)] = {'up': client.up_traffic, 'down': client.down_traffic}
@@ -304,14 +321,13 @@ async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
     if traffic_to_update:
         crud.update_clients_traffic(db, traffic_to_update)
 
-    # Re-fetch clients to return updated data
     updated_clients = crud.get_clients_for_inbound(db, inbound_id)
     server_ip = get_server_public_ip()
     inbound = updated_clients[0].inbound if updated_clients else None
+    if not inbound: return []
 
     for client in updated_clients:
         client.used_traffic_bytes = client.up_traffic + client.down_traffic
-        # Generate config link
         stream_settings = json.loads(inbound.stream_settings)
         network = stream_settings.get("network", "tcp")
         link = f"{inbound.protocol}://{client.uuid}@{server_ip}:{inbound.port}"

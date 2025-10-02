@@ -169,7 +169,7 @@
 <script>
 document.addEventListener('DOMContentLoaded', () => {
     // --- STATE & CACHE ---
-    const clientCache = new Map();
+    let statsInterval = null; // Variable to hold our timer
 
     // --- DOM ELEMENTS ---
     const inboundsTbody = document.getElementById('inbounds-table-body');
@@ -230,7 +230,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return date.toLocaleDateString('en-CA'); // YYYY-MM-DD format
     }
 
-    // --- RENDER FUNCTIONS (UPDATED) ---
+    // --- RENDER FUNCTIONS ---
     const renderInbounds = (inbounds) => {
         inboundsTbody.innerHTML = '';
         if (inbounds.length === 0) {
@@ -260,6 +260,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const renderClients = (inboundId, clients) => {
         const container = document.querySelector(`#clients-row-${inboundId} .clients-container`);
+        if (!container) return; // Exit if the container is not visible
+
         let clientsHtml = `
             <div class="clients-sub-table-wrapper">
                 <div class="sub-table-header">
@@ -297,7 +299,6 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div class="client-menu-icons">
                                 <i class="fas fa-qrcode" title="Show QR Code" data-action="show-qr" data-link="${c.config_link}" data-remark="${c.remark}"></i>
                                 <i class="fas fa-copy" title="Copy Link" data-action="copy-link" data-link="${c.config_link}"></i>
-                                <i class="fas fa-sync-alt" title="Refresh Stats" data-action="refresh-stats"></i>
                             </div>
                         </td>
                         <td><label class="switch"><input type="checkbox" ${c.enabled ? 'checked' : ''}><span class="slider"></span></label></td>
@@ -310,7 +311,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <td>${c.remark}</td>
                         <td>
                             <div class="traffic-bar">
-                                <div class="traffic-bar-fill" style="width: ${percentage}%;"></div>
+                                <div class="traffic-bar-fill" style="width: ${Math.min(percentage, 100)}%;"></div>
                             </div>
                             <div class="traffic-text">${formatBytes(usedBytes)} ${trafficLimitText}</div>
                         </td>
@@ -326,7 +327,20 @@ document.addEventListener('DOMContentLoaded', () => {
         container.innerHTML = clientsHtml;
     };
 
-    // --- EVENT HANDLER (UPDATED) ---
+    // --- NEW: Function to fetch and update stats periodically ---
+    const updateStats = async (inboundId) => {
+        try {
+            const clients = await apiCall(`/api/v1/inbounds/${inboundId}/stats`);
+            renderClients(inboundId, clients);
+        } catch (error) {
+            console.error("Failed to update stats:", error);
+            // Stop the interval if there's an error (e.g., inbound deleted)
+            if (statsInterval) clearInterval(statsInterval);
+        }
+    };
+
+
+    // --- EVENT HANDLER (UPDATED for Real-time) ---
     inboundsTbody.addEventListener('click', async (e) => {
         const target = e.target;
         const action = target.dataset.action;
@@ -338,19 +352,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const clientRow = target.closest('.client-row');
         const clientId = clientRow?.dataset.id;
 
-        const refreshInbound = async () => {
-             const expandBtn = document.querySelector(`.inbound-row[data-id='${inboundId}'] .expand-btn`);
-             if (expandBtn.textContent === '−') { // if it's open
-                expandBtn.click(); // close it
-                setTimeout(() => expandBtn.click(), 100); // and re-open to refresh
-             }
-        };
-
         switch (action) {
             case 'expand':
                 const clientsRow = document.getElementById(`clients-row-${inboundId}`);
                 const isOpening = !clientsRow.classList.contains('active');
                 
+                // Clear any existing timer before opening a new row or closing all
+                if (statsInterval) clearInterval(statsInterval);
+
                 document.querySelectorAll('.clients-row.active').forEach(row => row.classList.remove('active'));
                 document.querySelectorAll('.expand-btn').forEach(btn => btn.textContent = '+');
 
@@ -358,14 +367,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     clientsRow.classList.add('active');
                     target.textContent = '−';
                     clientsRow.querySelector('.clients-container').innerHTML = '<div class="loader">Loading...</div>';
-                    const clients = await apiCall(`/api/v1/inbounds/${inboundId}/stats`);
-                    clientCache.set(inboundId, clients);
-                    renderClients(inboundId, clients);
+                    
+                    // Initial fetch
+                    await updateStats(inboundId); 
+
+                    // Start the real-time update interval (e.g., every 5 seconds)
+                    statsInterval = setInterval(() => updateStats(inboundId), 1000);
                 }
                 break;
             case 'delete-inbound':
                 if (confirm(`Delete inbound #${inboundId}?`)) {
                     await apiCall(`/api/v1/inbounds/${inboundId}`, { method: 'DELETE' });
+                    if (statsInterval) clearInterval(statsInterval); // Stop timer if the deleted inbound was open
                     main();
                 }
                 break;
@@ -376,14 +389,9 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'delete-client':
                  if (confirm(`Delete client #${clientId}?`)) {
                     await apiCall(`/api/v1/clients/${clientId}`, { method: 'DELETE' });
-                    clientCache.delete(inboundId);
+                    updateStats(inboundId); // Refresh stats after deleting
                     main(true);
-                    refreshInbound();
                 }
-                break;
-            case 'refresh-stats':
-                clientCache.delete(inboundId);
-                refreshInbound();
                 break;
             case 'show-qr':
                 const link = target.dataset.link;
@@ -399,7 +407,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // --- FORM SUBMISSIONS (UPDATED) ---
+    // --- FORM SUBMISSIONS ---
     addInboundForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const network = document.getElementById('inbound-network').value;
@@ -437,24 +445,25 @@ document.addEventListener('DOMContentLoaded', () => {
             await apiCall(`/api/v1/inbounds/${inboundId}/clients`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
             clientModal.hide();
             addClientForm.reset();
-            clientCache.delete(inboundId);
             main(true);
         } catch (error) { alert(`Error: ${error.message}`); }
     });
 
     // --- MAIN EXECUTION ---
     const main = async (keepExpanded = false) => {
-        let expandedIds = new Set();
+        let expandedId = null;
         if (keepExpanded) {
-            document.querySelectorAll('.clients-row.active').forEach(row => expandedIds.add(row.id.replace('clients-row-', '')));
+            const activeRow = document.querySelector('.clients-row.active');
+            if (activeRow) {
+                expandedId = activeRow.id.replace('clients-row-', '');
+            }
         }
         try {
             const inbounds = await apiCall('/api/v1/inbounds');
             renderInbounds(inbounds);
-            if (keepExpanded) {
-                expandedIds.forEach(id => {
-                    document.querySelector(`.inbound-row[data-id='${id}'] .expand-btn`)?.click();
-                });
+            if (expandedId) {
+                const expandBtn = document.querySelector(`.inbound-row[data-id='${expandedId}'] .expand-btn`);
+                if (expandBtn) expandBtn.click();
             }
         } catch (error) {
             inboundsTbody.innerHTML = `<tr><td colspan="8" class="text-center">Error: ${error.message}</td></tr>`;
