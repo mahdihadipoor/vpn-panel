@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+passlib[bcrypt]
+psutil
+grpcio
+grpcio-tools
+typer
+python-multipart

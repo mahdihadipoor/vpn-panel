@@ -11,7 +11,9 @@ import threading
 import json
 import uuid
 import grpc
+import secrets
 
+from fastapi import FastAPI, Request, Depends, Form, HTTPException, Response, status
 from fastapi import FastAPI, Request, Depends, Form, HTTPException, Body
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -36,6 +38,21 @@ app.mount("/static", StaticFiles(directory=str(Path(BASE_DIR, 'static'))), name=
 last_net_io = psutil.net_io_counters()
 last_time = time.time()
 # ----------------------------------------------------
+
+async def get_current_user(request: Request, db: Session = Depends(get_db)):
+    token = request.cookies.get("session_token")
+    if not token:
+        return None
+    user = crud.get_user_by_session_token(db, token=token)
+    return user
+
+async def require_auth(user: models.User = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+            headers={"Location": "/"},
+        )
+    return user
 
 # --- Xray API Client ---
 def get_xray_stats(emails: List[str]):
@@ -107,26 +124,48 @@ def get_db():
 
 # --- Page and Auth Routes ---
 @app.get("/", response_class=HTMLResponse)
-async def read_root():
+async def read_root(user: models.User = Depends(get_current_user)):
+    if user:
+        # If user is already logged in, redirect to dashboard
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     return FileResponse(str(Path(BASE_DIR, 'templates', 'login.html')))
 
 @app.post("/login")
-async def login(db: Session = Depends(get_db), username: str = Form(...), password: str = Form(...)):
+async def login(response: Response, db: Session = Depends(get_db), username: str = Form(...), password: str = Form(...)):
     user = crud.get_user_by_username(db, username=username)
     if not user or not security.verify_password(password, user.hashed_password):
-        return JSONResponse(status_code=401, content={"message": "نام کاربری یا رمز عبور اشتباه است"})
-    return RedirectResponse(url="/dashboard", status_code=303)
+        return JSONResponse(
+            status_code=401, 
+            content={"success": False, "message": "نام کاربری یا رمز عبور اشتباه است"}
+        )
+    
+    # Create and set session token
+    token = secrets.token_hex(16)
+    crud.update_user_session(db, user_id=user.id, token=token)
+    response.set_cookie(key="session_token", value=token, httponly=True, max_age=86400) # Cookie expires in 1 day
+    
+    return JSONResponse(
+        status_code=200,
+        content={"success": True, "redirect_url": "/dashboard"}
+    )
+
+# New Logout Endpoint
+@app.get("/logout")
+async def logout(response: Response, db: Session = Depends(get_db), user: models.User = Depends(require_auth)):
+    crud.update_user_session(db, user_id=user.id, token=None)
+    response.delete_cookie("session_token")
+    return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.get("/dashboard", response_class=HTMLResponse)
-async def get_dashboard():
+async def get_dashboard(user: models.User = Depends(require_auth)):
     return FileResponse(str(Path(BASE_DIR, 'templates', 'dashboard.html')))
 
 @app.get("/panel-settings", response_class=HTMLResponse)
-async def get_panel_settings_page():
+async def get_panel_settings_page(user: models.User = Depends(require_auth)):
     return FileResponse(str(Path(BASE_DIR, 'templates', 'panel_settings.html')))
 
 @app.get("/inbounds", response_class=HTMLResponse)
-async def get_inbounds_page():
+async def get_inbounds_page(user: models.User = Depends(require_auth)):
     return FileResponse(str(Path(BASE_DIR, 'templates', 'inbounds.html')))
 
 @app.get("/inbounds/{inbound_id}", response_class=HTMLResponse)
@@ -136,7 +175,7 @@ async def get_clients_page(inbound_id: int):
 class DomainInfo(BaseModel):
     domain_name: str
         
-# --- XRAY CONFIG MANAGER ---
+# --- XRAY CONFIG MANAGER ---   
 class XrayManager:
     def __init__(self, config_path="/usr/local/etc/xray/config.json"):
         self.config_path = config_path

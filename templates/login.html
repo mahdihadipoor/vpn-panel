@@ -13,7 +13,9 @@
     <main class="login-container">
         <section class="login-card">
             <h2>ورود به پنل</h2>
-            <form action="/login" method="post">
+            <p id="error-message" class="error-message"></p>
+            
+            <form id="login-form">
                 <div class="input-group">
                     <label for="username">نام کاربری</label>
                     <input type="text" id="username" name="username" required>
@@ -22,9 +24,66 @@
                     <label for="password">رمز عبور</label>
                     <input type="password" id="password" name="password" required>
                 </div>
-                <button type="submit">ورود</button>
+                <button type="submit" id="login-button">
+                    <span class="spinner" id="spinner"></span>
+                    <span id="button-text">ورود</span>
+                </button>
             </form>
         </section>
     </main>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const loginForm = document.getElementById('login-form');
+    const loginButton = document.getElementById('login-button');
+    const spinner = document.getElementById('spinner');
+    const buttonText = document.getElementById('button-text');
+    const errorMessage = document.getElementById('error-message');
+
+    loginForm.addEventListener('submit', async (event) => {
+        event.preventDefault(); // Prevent the default page reload
+
+        // Show loading state
+        loginButton.disabled = true;
+        spinner.style.display = 'block';
+        buttonText.textContent = 'در حال ورود...';
+        errorMessage.style.display = 'none';
+
+        const formData = new FormData(loginForm);
+
+        try {
+            const response = await fetch('/login', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                // On successful login, redirect using JavaScript
+                window.location.href = data.redirect_url;
+            } else {
+                // On failure, show the error message
+                errorMessage.textContent = data.message;
+                errorMessage.style.display = 'block';
+                
+                // Reset button state
+                loginButton.disabled = false;
+                spinner.style.display = 'none';
+                buttonText.textContent = 'ورود';
+            }
+        } catch (error) {
+            // Handle network errors or other issues
+            errorMessage.textContent = 'خطایی در ارتباط با سرور رخ داد.';
+            errorMessage.style.display = 'block';
+
+            // Reset button state
+            loginButton.disabled = false;
+            spinner.style.display = 'none';
+            buttonText.textContent = 'ورود';
+        }
+    });
+});
+</script>
 </body>
 </html>

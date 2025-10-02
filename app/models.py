@@ -10,6 +10,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
+    session_token = Column(String, unique=True, nullable=True) # New field
 
 class Settings(Base):
     __tablename__ = "settings"

@@ -4,6 +4,27 @@ import json
 import uuid
 from . import models, security
 
+def get_user_by_session_token(db: Session, token: str):
+    return db.query(models.User).filter(models.User.session_token == token).first()
+
+def update_user_session(db: Session, user_id: int, token: str | None):
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if db_user:
+        db_user.session_token = token
+        db.commit()
+        db.refresh(db_user)
+    return db_user
+
+def update_user_password(db: Session, username: str, new_password: str):
+    db_user = get_user_by_username(db, username)
+    if db_user:
+        db_user.hashed_password = security.get_password_hash(new_password)
+        db_user.session_token = None # Log out from all sessions on password change
+        db.commit()
+        db.refresh(db_user)
+        return db_user
+    return None
+
 # ... (User and Settings functions remain unchanged) ...
 def get_user_by_username(db: Session, username: str):
     return db.query(models.User).filter(models.User.username == username).first()
