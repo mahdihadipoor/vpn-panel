@@ -13,6 +13,7 @@ import uuid
 import grpc
 import secrets
 
+# FIX: Added 'Body' to the import list
 from fastapi import FastAPI, Request, Depends, Form, HTTPException, Body, Response, status
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -271,43 +272,36 @@ class UpdateClient(BaseModel):
     reset_traffic: Optional[bool] = False
 
 # --- INBOUND APIs (FIXED) ---
-@app.get("/api/v1/inbounds")
+@app.get("/api/v1/inbounds", dependencies=[Depends(require_auth)])
 async def read_inbounds(db: Session = Depends(get_db)):
     inbounds = crud.get_inbounds(db)
     for ib in inbounds:
         ib.client_count = len(ib.clients)
     return inbounds
 
-@app.post("/api/v1/inbounds")
+@app.post("/api/v1/inbounds", dependencies=[Depends(require_auth)])
 async def add_inbound(inbound_data: CreateInbound, db: Session = Depends(get_db)):
     if crud.get_inbound_by_port(db, inbound_data.port) or crud.get_inbound_by_remark(db, inbound_data.remark):
         raise HTTPException(status_code=400, detail="Port or Remark already in use.")
-    
     inbound_dict = inbound_data.dict()
     inbound_dict['stream_settings'] = json.dumps(inbound_data.stream_settings.dict(exclude_none=True))
-    
     new_inbound = crud.create_inbound(db, inbound_dict)
-    
     if xray_manager.generate_config(db):
         xray_manager.apply_config()
     else:
         raise HTTPException(status_code=500, detail="Failed to generate Xray config file.")
-        
     return new_inbound
 
-@app.put("/api/v1/inbounds/{inbound_id}")
+@app.put("/api/v1/inbounds/{inbound_id}", dependencies=[Depends(require_auth)])
 async def update_inbound_data(inbound_id: int, inbound_data: UpdateInbound, db: Session = Depends(get_db)):
     updated_inbound = crud.update_inbound(db, inbound_id, {"enabled": inbound_data.enabled})
     if not updated_inbound:
         raise HTTPException(status_code=404, detail="Inbound not found")
-
     if xray_manager.generate_config(db):
         xray_manager.apply_config()
-    
     return updated_inbound
 
-
-@app.delete("/api/v1/inbounds/{inbound_id}")
+@app.delete("/api/v1/inbounds/{inbound_id}", dependencies=[Depends(require_auth)])
 async def remove_inbound(inbound_id: int, db: Session = Depends(get_db)):
     if crud.delete_inbound(db, inbound_id):
         if xray_manager.generate_config(db):
@@ -316,7 +310,7 @@ async def remove_inbound(inbound_id: int, db: Session = Depends(get_db)):
     raise HTTPException(status_code=404, detail="Inbound not found.")
 
 # --- CLIENT APIs ---
-@app.get("/api/v1/inbounds/{inbound_id}/stats")
+@app.get("/api/v1/inbounds/{inbound_id}/stats", dependencies=[Depends(require_auth)])
 async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
     clients = crud.get_clients_for_inbound(db, inbound_id)
     if not clients: return []
@@ -387,7 +381,7 @@ async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
     return updated_clients
 
 
-@app.post("/api/v1/inbounds/{inbound_id}/clients")
+@app.post("/api/v1/inbounds/{inbound_id}/clients", dependencies=[Depends(require_auth)])
 async def add_client_for_inbound(inbound_id: int, client_data: CreateClient, db: Session = Depends(get_db)):
     total_gb = client_data.total_mb / 1024 if client_data.total_mb > 0 else 0
     
@@ -404,7 +398,7 @@ async def add_client_for_inbound(inbound_id: int, client_data: CreateClient, db:
         
     return new_client
 
-@app.delete("/api/v1/clients/{client_id}")
+@app.delete("/api/v1/clients/{client_id}", dependencies=[Depends(require_auth)])
 async def remove_client(client_id: int, db: Session = Depends(get_db)):
     db_client = crud.get_client_by_id(db, client_id)
     if not db_client:
@@ -418,7 +412,7 @@ async def remove_client(client_id: int, db: Session = Depends(get_db)):
         
     return {"status": "success"}
 
-@app.put("/api/v1/clients/{client_id}")
+@app.put("/api/v1/clients/{client_id}", dependencies=[Depends(require_auth)])
 async def update_client_data(client_id: int, client_data: UpdateClient, db: Session = Depends(get_db)):
     update_data = client_data.dict(exclude_unset=True)
     
@@ -443,7 +437,7 @@ async def update_client_data(client_id: int, client_data: UpdateClient, db: Sess
     return updated_client
 
 # --- System & Panel API Routes (Unchanged) ---
-@app.get("/api/v1/system/stats")
+@app.get("/api/v1/system/stats", dependencies=[Depends(require_auth)])
 async def get_system_stats():
     global last_net_io, last_time
     cpu_percent = psutil.cpu_percent(interval=0.1)
@@ -499,19 +493,19 @@ async def get_system_stats():
         "ip_addresses": {"ipv4": sorted(list(set(ipv4_addrs))), "ipv6": sorted(list(set(ipv6_addrs)))}
     }
 
-@app.get("/api/v1/panel/settings")
+@app.get("/api/v1/panel/settings", dependencies=[Depends(require_auth)])
 async def read_settings(db: Session = Depends(get_db)):
     settings = crud.get_settings(db)
     return settings
 
-@app.post("/api/v1/panel/settings")
+@app.post("/api/v1/panel/settings", dependencies=[Depends(require_auth)])
 async def write_settings(settings_data: dict = Body(...), db: Session = Depends(get_db)):
     updated_settings = crud.update_settings(db, settings_data)
     if not updated_settings:
         raise HTTPException(status_code=404, detail="Settings not found.")
     return {"status": "success", "message": "Settings saved successfully."}
 
-@app.post("/api/v1/panel/get-certificate")
+@app.post("/api/v1/panel/get-certificate", dependencies=[Depends(require_auth)])
 async def get_certificate(domain_info: DomainInfo, db: Session = Depends(get_db)):
     domain = domain_info.domain_name.strip()
     if not domain:
@@ -531,7 +525,7 @@ async def get_certificate(domain_info: DomainInfo, db: Session = Depends(get_db)
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=500, detail="Certbot command timed out.")
 
-@app.post("/api/v1/panel/restart")
+@app.post("/api/v1/panel/restart", dependencies=[Depends(require_auth)])
 async def restart_panel():
     def restart_script():
         time.sleep(1)
@@ -539,21 +533,21 @@ async def restart_panel():
     threading.Thread(target=restart_script).start()
     return {"status": "success", "message": "Panel is restarting..."}
 
-@app.post("/api/v1/xray/start")
+@app.post("/api/v1/xray/start", dependencies=[Depends(require_auth)])
 async def start_xray():
     run_shell_command("sudo systemctl start xray.service")
     if get_xray_status() == "active":
         return {"status": "success", "message": "Xray started successfully."}
     raise HTTPException(status_code=500, detail="Failed to start Xray.")
 
-@app.post("/api/v1/xray/stop")
+@app.post("/api/v1/xray/stop", dependencies=[Depends(require_auth)])
 async def stop_xray():
     run_shell_command("sudo systemctl stop xray.service")
     if get_xray_status() != "active":
         return {"status": "success", "message": "Xray stopped successfully."}
     raise HTTPException(status_code=500, detail="Failed to stop Xray.")
 
-@app.post("/api/v1/xray/restart")
+@app.post("/api/v1/xray/restart", dependencies=[Depends(require_auth)])
 async def restart_xray():
     run_shell_command("sudo systemctl restart xray.service")
     time.sleep(1)
