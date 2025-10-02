@@ -45,6 +45,8 @@ download_source() {
         print_error "Failed to clone repository. Please check the URL in the script."
         exit 1
     fi
+    # FIX: Set correct permissions for the directory
+    chmod 755 "$INSTALL_DIR"
     cd "$INSTALL_DIR"
     print_success "Source code downloaded to $INSTALL_DIR"
 }
@@ -84,6 +86,8 @@ get_user_config() {
     source "$INSTALL_DIR/venv/bin/activate"
     python3 "$INSTALL_DIR/cli.py" set-admin "$admin_user" "$admin_pass"
     deactivate
+    # FIX: Set correct permissions for the database file after creation
+    chmod 644 "$INSTALL_DIR/panel.db"
 }
 
 create_service() {
