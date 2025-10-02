@@ -566,9 +566,12 @@ async def restart_xray():
 
 if __name__ == "__main__":
     db = SessionLocal()
-    settings = crud.get_settings(db)
     
-    listen_port = settings.listen_port
+    # NEW: Read port from environment variable set by the service file
+    default_port = crud.get_settings(db).listen_port if crud.get_settings(db) else 2053
+    listen_port = int(os.environ.get("VUI_PORT", default_port))
+
+    settings = crud.get_settings(db)
     public_key = settings.public_key_path
     private_key = settings.private_key_path
     

@@ -1,84 +1,92 @@
 #!/bin/bash
 
-# Define the GitHub repository URL
-GIT_REPO_URL="https://github.com/mahdihadipoor/vpn-panel.git"
-INSTALL_DIR="/usr/local/v-ui"
+# --- Configuration ---
+# Replace with your actual GitHub repository URL
+GIT_REPO_URL="https://github.com/mahdihadipoor/vpn-panel.git" 
+INSTALL_DIR="/root/v-ui"
+SERVICE_NAME="v-ui"
 
-# --- Helper Functions ---
-print_success() {
-    echo -e "\e[32m$1\e[0m"
-}
-print_error() {
-    echo -e "\e[31m$1\e[0m"
-}
-print_info() {
-    echo -e "\e[34m$1\e[0m"
-}
+# --- Colors and Helpers ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-# 1. System Update and Dependency Installation
+print_success() { echo -e "${GREEN}$1${NC}"; }
+print_error() { echo -e "${RED}$1${NC}"; }
+print_info() { echo -e "${BLUE}$1${NC}"; }
+
+# --- Functions ---
+
 install_dependencies() {
-    print_info "Updating system and installing dependencies (python, pip, git)..."
+    print_info "Updating system and installing dependencies..."
     apt-get update
-    apt-get install -y python3 python3-pip python3-venv git
-    print_success "Dependencies installed successfully."
+    apt-get install -y python3 python3-pip python3-venv git curl socat
+    print_success "Dependencies installed."
 }
 
-# 2. Download Source Code
+install_xray() {
+    print_info "Installing/Updating Xray-core..."
+    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+    if [ $? -ne 0 ]; then
+        print_error "Xray installation failed."
+        exit 1
+    fi
+    print_success "Xray-core installed successfully."
+}
+
 download_source() {
     print_info "Cloning panel source code from GitHub..."
     if [ -d "$INSTALL_DIR" ]; then
-        print_info "Existing installation found. Backing up..."
-        mv "$INSTALL_DIR" "$INSTALL_DIR.bak_$(date +%s)"
+        print_info "Existing installation found. Creating a backup."
+        mv "$INSTALL_DIR" "$INSTALL_DIR.bak_$(date +%F-%T)"
     fi
     git clone "$GIT_REPO_URL" "$INSTALL_DIR"
     if [ $? -ne 0 ]; then
-        print_error "Failed to clone repository. Please check the URL."
+        print_error "Failed to clone repository. Please check the URL in the script."
         exit 1
     fi
     cd "$INSTALL_DIR"
-    print_success "Source code downloaded successfully."
+    print_success "Source code downloaded to $INSTALL_DIR"
 }
 
-# 3. Setup Python Environment and Install Packages
 setup_python_env() {
     print_info "Setting up Python virtual environment..."
+    cd "$INSTALL_DIR"
     python3 -m venv venv
     source venv/bin/activate
     
     print_info "Installing required Python packages..."
+    pip install --upgrade pip
     pip install -r requirements.txt
-    
     deactivate
     print_success "Python environment is ready."
 }
 
-# 4. Get User Input
 get_user_config() {
-    print_info "Please provide the initial configuration:"
-    read -p "Enter a username for the panel admin: " admin_user
-    read -sp "Enter a password for the panel admin: " admin_pass
+    print_info "\n--- Panel Configuration ---"
+    read -p "Enter a username for the panel admin [default: admin]: " admin_user
+    read -sp "Enter a password for the panel admin [default: admin]: " admin_pass
     echo
-    read -p "Enter the port for the panel to listen on (e.g., 443): " panel_port
+    read -p "Enter the port for the panel to listen on [default: 2053]: " panel_port
 
     # Set defaults if empty
-    if [ -z "$admin_user" ]; then admin_user="admin"; fi
-    if [ -z "$admin_pass" ]; then admin_pass="admin"; fi
-    if [ -z "$panel_port" ]; then panel_port=443; fi
+    admin_user=${admin_user:-admin}
+    admin_pass=${admin_pass:-admin}
+    panel_port=${panel_port:-2053}
 
     print_info "Setting initial admin and port..."
     # Activate venv to run the commands
     source "$INSTALL_DIR/venv/bin/activate"
     python3 "$INSTALL_DIR/cli.py" set-admin "$admin_user" "$admin_pass"
-    # Note: We need a cli command to set the port. For now, we'll create the service file with it.
+    # The panel will read the port from an environment variable in the service file
     deactivate
 }
 
-# 5. Create systemd Service File
 create_service() {
-    print_info "Creating systemd service file for the panel..."
+    print_info "Creating systemd service file..."
     
-    # We will pass the port as an environment variable to the panel
-    cat > /etc/systemd/system/v-ui.service <<EOF
+    cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
 Description=V-UI Panel Service
 After=network.target
@@ -88,7 +96,7 @@ User=root
 WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/venv/bin/python3 main.py
 Environment="VUI_PORT=$panel_port"
-Restart=on-failure
+Restart=always
 RestartSec=5s
 
 [Install]
@@ -98,31 +106,76 @@ EOF
     print_success "Service file created."
 }
 
-# 6. Start the Service
-start_service() {
-    print_info "Enabling and starting the panel service..."
+create_management_script() {
+    print_info "Creating management script 'v-ui'..."
+    cat > /usr/local/bin/${SERVICE_NAME} <<EOF
+#!/bin/bash
+cd "$INSTALL_DIR" || exit
+source venv/bin/activate
+python3 cli.py "\$@"
+deactivate
+EOF
+    chmod +x /usr/local/bin/${SERVICE_NAME}
+    print_success "Management script created. You can now use 'v-ui' command."
+}
+
+start_services() {
+    print_info "Enabling and starting services..."
     systemctl daemon-reload
-    systemctl enable v-ui.service
-    systemctl start v-ui.service
-    print_success "Panel service started."
+    systemctl enable ${SERVICE_NAME}
+    systemctl start ${SERVICE_NAME}
+    # Ensure Xray is also running
+    systemctl enable xray
+    systemctl restart xray
+}
+
+display_final_info() {
+    # Get server IP
+    SERVER_IP=$(curl -s http://ip.sb)
+    
+    # Check services status
+    PANEL_STATUS=$(systemctl is-active ${SERVICE_NAME})
+    XRAY_STATUS=$(systemctl is-active xray)
+
+    if [ "$PANEL_STATUS" == "active" ]; then
+        PANEL_STATUS_COLOR="${GREEN}Running${NC}"
+    else
+        PANEL_STATUS_COLOR="${RED}Not Running${NC}"
+    fi
+
+    if [ "$XRAY_STATUS" == "active" ]; then
+        XRAY_STATUS_COLOR="${GREEN}Running${NC}"
+    else
+        XRAY_STATUS_COLOR="${RED}Not Running${NC}"
+    fi
+
+    echo -e "\n╔══════════════════════════════════════════════════╗"
+    echo -e "║              ${GREEN}V-UI Panel Installation Complete${NC}            ║"
+    echo -e "╠══════════════════════════════════════════════════╣"
+    echo -e "║                                                  ║"
+    echo -e "║   ${BLUE}Access URL:${NC}   http://${SERVER_IP}:${panel_port}                ║"
+    echo -e "║   ${BLUE}Username:${NC}     ${admin_user}                                 ║"
+    echo -e "║   ${BLUE}Password:${NC}     ${admin_pass}                                 ║"
+    echo -e "║                                                  ║"
+    echo -e "║   ${BLUE}Panel Status:${NC} ${PANEL_STATUS_COLOR}                             ║"
+    echo -e "║   ${BLUE}Xray Status:${NC}  ${XRAY_STATUS_COLOR}                              ║"
+    echo -e "║                                                  ║"
+    echo -e "║   Use '${GREEN}v-ui${NC}' command for management.             ║"
+    echo -e "║                                                  ║"
+    echo -e "╚══════════════════════════════════════════════════╝"
 }
 
 # --- Main Execution ---
 main() {
     install_dependencies
+    install_xray
     download_source
     setup_python_env
     get_user_config
     create_service
-    start_service
-
-    print_success "\n--- Installation Complete! ---"
-    echo "Your panel is now running."
-    echo "You can access it at: http://<your-server-ip>:$panel_port"
-    echo "Admin Username: $admin_user"
-    echo "Admin Password: [your_chosen_password]"
-    echo "To view logs, run: journalctl -u v-ui -f"
-    echo "To stop the panel, run: systemctl stop v-ui"
+    create_management_script
+    start_services
+    display_final_info
 }
 
 main
