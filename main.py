@@ -139,14 +139,20 @@ async def login(response: Response, db: Session = Depends(get_db), username: str
             content={"success": False, "message": "نام کاربری یا رمز عبور اشتباه است"}
         )
     
+    # Create session token
     token = secrets.token_hex(16)
     crud.update_user_session(db, user_id=user.id, token=token)
-    response.set_cookie(key="session_token", value=token, httponly=True, max_age=86400) # 1 day expiry
-    
-    return JSONResponse(
+
+    # Create a JSON response first
+    json_response = JSONResponse(
         status_code=200,
         content={"success": True, "redirect_url": "/dashboard"}
     )
+    
+    # Set the cookie on the JSON response before returning it
+    json_response.set_cookie(key="session_token", value=token, httponly=True, max_age=86400) # Cookie expires in 1 day
+    
+    return json_response
 
 @app.get("/logout")
 async def logout(response: Response, db: Session = Depends(get_db), user: models.User = Depends(require_auth)):
