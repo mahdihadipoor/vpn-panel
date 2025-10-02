@@ -81,7 +81,7 @@ def get_inbound_by_remark(db: Session, remark: str):
     return db.query(models.Inbound).filter(models.Inbound.remark == remark).first()
     
 def create_inbound(db: Session, inbound_data: dict):
-    # BUG FIX: Removed total_gb and expiry_time as they are not properties of Inbound
+    # This function is now correct
     settings_str = inbound_data.get("settings", '{}')
     stream_settings_str = inbound_data.get("stream_settings", '{}')
     
@@ -97,6 +97,7 @@ def create_inbound(db: Session, inbound_data: dict):
     db.refresh(db_inbound)
     return db_inbound
 
+# NEW function to update an inbound
 def update_inbound(db: Session, inbound_id: int, inbound_data: dict):
     db_inbound = get_inbound_by_id(db, inbound_id)
     if db_inbound:

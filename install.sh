@@ -105,7 +105,6 @@ EOF
 create_management_script() {
     print_info "Creating management script 'v-ui'..."
     
-    # This script will provide a menu for managing the panel
     cat > /usr/local/bin/${SERVICE_NAME} <<'EOF'
 #!/bin/bash
 
@@ -238,7 +237,6 @@ start_services() {
 display_final_info() {
     SERVER_IP=$(curl -s4 icanhazip.com || curl -s6 icanhazip.com)
     
-    # Wait a moment for services to start
     sleep 3
 
     PANEL_STATUS=$(systemctl is-active ${SERVICE_NAME})
@@ -253,7 +251,7 @@ display_final_info() {
     echo -e "║                                                  ║"
     echo -e "║   ${BLUE}Access URL:${NC}   http://${SERVER_IP}:${panel_port}                ║"
     echo -e "║   ${BLUE}Username:${NC}     ${admin_user}                                 ║"
-    echo -e "║   ${BLUE}Password:${NC}     ${admin_pass}                                 ║"
+    echo -e "║   ${BLUE}Password:${NC}     [your chosen password]                     ║"
     echo -e "║                                                  ║"
     echo -e "║   ${BLUE}Panel Status:${NC} ${PANEL_STATUS_COLOR}                             ║"
     echo -e "║   ${BLUE}Xray Status:${NC}  ${XRAY_STATUS_COLOR}                              ║"

@@ -13,8 +13,7 @@ import uuid
 import grpc
 import secrets
 
-from fastapi import FastAPI, Request, Depends, Form, HTTPException, Response, status
-from fastapi import FastAPI, Request, Depends, Form, HTTPException, Body
+from fastapi import FastAPI, Request, Depends, Form, HTTPException, Body, Response, status
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -22,7 +21,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
-from app import crud, security
+from app import crud, models, security
 from app.database import SessionLocal, create_db_and_tables
 from app.xray_api import stats_pb2, stats_pb2_grpc
 
@@ -39,20 +38,7 @@ last_net_io = psutil.net_io_counters()
 last_time = time.time()
 # ----------------------------------------------------
 
-async def get_current_user(request: Request, db: Session = Depends(get_db)):
-    token = request.cookies.get("session_token")
-    if not token:
-        return None
-    user = crud.get_user_by_session_token(db, token=token)
-    return user
 
-async def require_auth(user: models.User = Depends(get_current_user)):
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
-            headers={"Location": "/"},
-        )
-    return user
 
 # --- Xray API Client ---
 def get_xray_stats(emails: List[str]):
@@ -122,11 +108,25 @@ def get_db():
     finally:
         db.close()
 
+async def get_current_user(request: Request, db: Session = Depends(get_db)):
+    token = request.cookies.get("session_token")
+    if not token:
+        return None
+    user = crud.get_user_by_session_token(db, token=token)
+    return user
+
+async def require_auth(user: models.User = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+            headers={"Location": "/"},
+        )
+    return user
+
 # --- Page and Auth Routes ---
 @app.get("/", response_class=HTMLResponse)
 async def read_root(user: models.User = Depends(get_current_user)):
     if user:
-        # If user is already logged in, redirect to dashboard
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     return FileResponse(str(Path(BASE_DIR, 'templates', 'login.html')))
 
@@ -139,17 +139,15 @@ async def login(response: Response, db: Session = Depends(get_db), username: str
             content={"success": False, "message": "نام کاربری یا رمز عبور اشتباه است"}
         )
     
-    # Create and set session token
     token = secrets.token_hex(16)
     crud.update_user_session(db, user_id=user.id, token=token)
-    response.set_cookie(key="session_token", value=token, httponly=True, max_age=86400) # Cookie expires in 1 day
+    response.set_cookie(key="session_token", value=token, httponly=True, max_age=86400) # 1 day expiry
     
     return JSONResponse(
         status_code=200,
         content={"success": True, "redirect_url": "/dashboard"}
     )
 
-# New Logout Endpoint
 @app.get("/logout")
 async def logout(response: Response, db: Session = Depends(get_db), user: models.User = Depends(require_auth)):
     crud.update_user_session(db, user_id=user.id, token=None)
