@@ -239,7 +239,6 @@ async def read_inbounds(db: Session = Depends(get_db)):
     inbounds = crud.get_inbounds(db)
     for ib in inbounds:
         ib.client_count = len(ib.clients)
-        # The erroneous lines that checked for 'ib.expiry_time' have been removed.
     return inbounds
 
 @app.post("/api/v1/inbounds")
@@ -288,6 +287,7 @@ async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
     client_emails = [c.remark for c in clients]
     live_stats = get_xray_stats(client_emails)
     
+    # ... (بخش مربوط به بررسی ترافیک و تاریخ انقضا بدون تغییر باقی می‌ماند) ...
     traffic_to_update = {}
     needs_reload = False
     now = int(time.time())
@@ -306,12 +306,7 @@ async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
             total_used = client.up_traffic + client.down_traffic
             limit_bytes = client.total_gb * 1024 * 1024 * 1024
 
-            if limit_bytes > 0 and total_used >= limit_bytes:
-                client.enabled = False
-                needs_reload = True
-                crud.update_client(db, client.id, {"enabled": False})
-
-            elif client.expiry_time > 0 and now >= client.expiry_time:
+            if (limit_bytes > 0 and total_used >= limit_bytes) or (client.expiry_time > 0 and now >= client.expiry_time):
                 client.enabled = False
                 needs_reload = True
                 crud.update_client(db, client.id, {"enabled": False})
@@ -322,27 +317,35 @@ async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
     if needs_reload:
         if xray_manager.generate_config(db):
             xray_manager.apply_config()
-
+    
     updated_clients = crud.get_clients_for_inbound(db, inbound_id)
-    server_ip = get_server_public_ip()
     inbound = updated_clients[0].inbound if updated_clients else None
     if not inbound: return []
 
-    for client in updated_clients:
-        client.used_traffic_bytes = client.up_traffic + client.down_traffic
+    settings = crud.get_settings(db)
+    domain_address = settings.domain_name if settings.domain_name else None
+    ip_address = get_server_public_ip()
+
+    def generate_link(address, client_uuid, client_remark):
+        if not address: return ""
         stream_settings = json.loads(inbound.stream_settings)
         network = stream_settings.get("network", "tcp")
-        link = f"{inbound.protocol}://{client.uuid}@{server_ip}:{inbound.port}"
+        link = f"{inbound.protocol}://{client_uuid}@{address}:{inbound.port}"
         params = {"type": network, "security": stream_settings.get("security", "none")}
         if network == "ws":
             ws_opts = stream_settings.get("wsSettings", {})
             params["path"] = ws_opts.get("path", "/")
-            params["host"] = ws_opts.get("headers", {}).get("Host", server_ip)
+            params["host"] = ws_opts.get("headers", {}).get("Host", address)
         elif network == "grpc":
             grpc_opts = stream_settings.get("grpcSettings", {})
             params["serviceName"] = grpc_opts.get("serviceName", "")
         query_string = "&".join([f"{k}={v}" for k, v in params.items()])
-        client.config_link = f"{link}?{query_string}#{client.remark}"
+        return f"{link}?{query_string}#{client_remark}"
+
+    for client in updated_clients:
+        client.used_traffic_bytes = client.up_traffic + client.down_traffic
+        client.config_link_ip = generate_link(ip_address, client.uuid, client.remark)
+        client.config_link_domain = generate_link(domain_address, client.uuid, client.remark)
         
     return updated_clients
 

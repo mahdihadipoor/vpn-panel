@@ -39,6 +39,19 @@
             height: 8px;
             border-radius: 50%;
         }
+        .qr-host-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        .modal-header {
+            display: grid;
+            grid-template-columns: 1fr auto auto;
+            align-items: center;
+            gap: 16px;
+        }
         .online-status.online .dot { background-color: var(--status-running); }
         .online-status.online { color: var(--status-running); }
         .online-status.offline .dot { background-color: #ced4da; }
@@ -159,6 +172,10 @@
         <div class="modal-content qr-modal-content">
             <div class="modal-header">
                 <h2 id="qr-code-remark">QR Code</h2>
+                <div class="qr-host-toggle">
+                    <span>Use IPv4 for host</span>
+                    <label class="switch"><input type="checkbox" id="qr-use-ip-toggle"><span class="slider"></span></label>
+                </div>
                 <button class="close-modal-btn" type="button">&times;</button>
             </div>
             <div class="modal-body qr-modal-body" id="qr-code-container"></div>
@@ -217,6 +234,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const addInboundForm = document.getElementById('add-inbound-form');
     const addClientForm = document.getElementById('add-client-form');
     const editClientForm = document.getElementById('edit-client-form');
+    // New QR Code elements
+    const qrContainer = document.getElementById('qr-code-container');
+    const qrUseIpToggle = document.getElementById('qr-use-ip-toggle');
 
 
     // --- MODAL HANDLING ---
@@ -238,7 +258,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const editModal = setupModal(editClientModal, null);
     const qrModal = setupModal(qrCodeModal, null);
 
-
     // --- HELPERS ---
     const apiCall = async (url, options = {}) => {
         try {
@@ -259,9 +278,16 @@ document.addEventListener('DOMContentLoaded', () => {
             throw error;
         }
     };
+    
+    const generateQrCode = (text) => {
+        qrContainer.innerHTML = '';
+        if (text) {
+            new QRCode(qrContainer, { text: text, width: 250, height: 250 });
+        }
+    };
 
     const formatBytes = (bytes) => {
-        if (bytes === 0) return '0 B';
+        if (!bytes || bytes === 0) return '0 B';
         const k = 1024;
         const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -333,7 +359,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const totalBytes = c.total_gb * 1024 * 1024 * 1024;
                 const usedBytes = c.used_traffic_bytes;
                 const percentage = totalBytes > 0 ? (usedBytes / totalBytes) * 100 : 0;
-                const trafficLimitText = c.total_gb > 0 ? `/ ${c.total_gb.toFixed(2)} GB` : '/ ∞';
+                const trafficLimitText = c.total_gb > 0 ? `/ ${(c.total_gb * 1024).toFixed(0)} MB` : '/ ∞';
                 const onlineStatus = c.online ? 'online' : 'offline';
                 const onlineText = c.online ? 'Online' : 'Offline';
 
@@ -341,7 +367,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     <tr class="client-row" data-id="${c.id}">
                         <td>
                             <div class="client-menu-icons">
-                                <i class="fas fa-qrcode" title="Show QR Code" data-action="show-qr"></i>
+                                <i class="fas fa-qrcode" title="Show QR Code" data-action="show-qr" 
+                                   data-link-domain="${c.config_link_domain || ''}" 
+                                   data-link-ip="${c.config_link_ip}"></i>
                                 <i class="fas fa-copy" title="Copy Link" data-action="copy-link"></i>
                                 <i class="fas fa-edit" title="Edit Client" data-action="edit-client"></i>
                             </div>
@@ -443,17 +471,29 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'show-qr': {
                 const client = getClientData(clientId);
                 if (!client) return;
-                document.getElementById('qr-code-remark').textContent = `QR Code for ${client.remark}`;
-                const qrContainer = document.getElementById('qr-code-container');
-                qrContainer.innerHTML = '';
-                new QRCode(qrContainer, { text: client.config_link, width: 250, height: 250 });
+
+                const linkDomain = target.dataset.linkDomain;
+                const linkIp = target.dataset.linkIp;
+
+                qrCodeModal.dataset.linkDomain = linkDomain;
+                qrCodeModal.dataset.linkIp = linkIp;
+                
+                document.getElementById('qr-code-remark').textContent = client.remark;
+                
+                const defaultLink = linkDomain || linkIp;
+                generateQrCode(defaultLink);
+                
+                // If domain link exists, toggle is off. If only IP exists, toggle is on.
+                qrUseIpToggle.checked = !linkDomain;
+                
                 qrModal.show();
                 break;
             }
             case 'copy-link': {
                 const client = getClientData(clientId);
                 if (!client) return;
-                navigator.clipboard.writeText(client.config_link).then(() => alert('Config link copied!'));
+                // By default, copy the domain link if it exists, otherwise the IP link.
+                navigator.clipboard.writeText(client.config_link_domain || client.config_link_ip).then(() => alert('Config link copied!'));
                 break;
             }
             case 'edit-client': {
@@ -461,7 +501,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!client) return;
                 document.getElementById('edit-client-id').value = client.id;
                 document.getElementById('edit-client-enabled').checked = client.enabled;
-                // BUG FIX: Convert GB to MB for the input field
                 document.getElementById('edit-client-total-mb').value = client.total_gb * 1024;
                 document.getElementById('edit-client-expiry-days').value = '';
                 document.getElementById('edit-client-reset-traffic').checked = false;
@@ -478,18 +517,39 @@ document.addEventListener('DOMContentLoaded', () => {
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({ enabled: newStatus })
                     });
-                    client.enabled = newStatus; // Update cache
+                    client.enabled = newStatus;
                 } catch(e) {
-                    target.checked = !newStatus; // Revert checkbox on failure
+                    target.checked = !newStatus;
                 }
                 break;
             }
             case 'toggle-inbound': {
-                // This feature was missing, let's add it (backend support needed)
-                // For now, it will just be a visual toggle
-                console.log(`Toggling inbound ${inboundId}`);
+                const newStatus = target.checked;
+                try {
+                    await apiCall(`/api/v1/inbounds/${inboundId}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ enabled: newStatus })
+                    });
+                } catch(e) {
+                    target.checked = !newStatus;
+                }
                 break;
             }
+        }
+    });
+
+    // --- NEW: Event listener for the QR code toggle switch ---
+    qrUseIpToggle.addEventListener('change', (e) => {
+        const useIp = e.target.checked;
+        const linkDomain = qrCodeModal.dataset.linkDomain;
+        const linkIp = qrCodeModal.dataset.linkIp;
+
+        if (useIp) {
+            generateQrCode(linkIp);
+        } else {
+            // Only switch back to domain if it exists, otherwise stay on IP
+            generateQrCode(linkDomain || linkIp);
         }
     });
 
@@ -523,7 +583,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const data = { 
             remark: document.getElementById('client-remark').value,
-            total_mb: parseInt(document.getElementById('client-total-mb').value) || 0, // Send as MB
+            total_mb: parseInt(document.getElementById('client-total-mb').value) || 0,
             expiry_time: expiry_time
         };
 
@@ -547,7 +607,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const data = {
             enabled: document.getElementById('edit-client-enabled').checked,
-            total_mb: parseInt(document.getElementById('edit-client-total-mb').value) || 0, // Send as MB
+            total_mb: parseInt(document.getElementById('edit-client-total-mb').value) || 0,
             expiry_time: expiry_time,
             reset_traffic: document.getElementById('edit-client-reset-traffic').checked
         };
