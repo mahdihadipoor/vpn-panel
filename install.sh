@@ -90,6 +90,7 @@ After=network.target
 [Service]
 User=root
 WorkingDirectory=$INSTALL_DIR
+# FIX: Use the python from the virtual environment
 ExecStart=$INSTALL_DIR/venv/bin/python3 main.py
 Environment="VUI_PORT=$panel_port"
 Restart=always
@@ -105,6 +106,7 @@ EOF
 create_management_script() {
     print_info "Creating management script 'v-ui'..."
     
+    # This script will provide a menu for managing the panel
     cat > /usr/local/bin/${SERVICE_NAME} <<'EOF'
 #!/bin/bash
 
