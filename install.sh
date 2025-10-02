@@ -1,8 +1,7 @@
 #!/bin/bash
 
 # --- Configuration ---
-# Replace with your actual GitHub repository URL
-GIT_REPO_URL="https://github.com/mahdihadipoor/vpn-panel.git" 
+GIT_REPO_URL="https://github.com/mahdihadipoor/vpn-panel.git" # آدرس ریپازیتوری شما
 INSTALL_DIR="/root/v-ui"
 SERVICE_NAME="v-ui"
 
@@ -70,16 +69,13 @@ get_user_config() {
     echo
     read -p "Enter the port for the panel to listen on [default: 2053]: " panel_port
 
-    # Set defaults if empty
     admin_user=${admin_user:-admin}
     admin_pass=${admin_pass:-admin}
     panel_port=${panel_port:-2053}
 
-    print_info "Setting initial admin and port..."
-    # Activate venv to run the commands
+    print_info "Setting initial admin user..."
     source "$INSTALL_DIR/venv/bin/activate"
     python3 "$INSTALL_DIR/cli.py" set-admin "$admin_user" "$admin_pass"
-    # The panel will read the port from an environment variable in the service file
     deactivate
 }
 
@@ -108,15 +104,126 @@ EOF
 
 create_management_script() {
     print_info "Creating management script 'v-ui'..."
-    cat > /usr/local/bin/${SERVICE_NAME} <<EOF
+    
+    # This script will provide a menu for managing the panel
+    cat > /usr/local/bin/${SERVICE_NAME} <<'EOF'
 #!/bin/bash
-cd "$INSTALL_DIR" || exit
-source venv/bin/activate
-python3 cli.py "\$@"
-deactivate
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+show_menu() {
+    clear
+    echo -e "╔══════════════════════════════════════════════════╗"
+    echo -e "║             ${BLUE}V-UI Panel Management Script${NC}            ║"
+    echo -e "╟──────────────────────────────────────────────────╢"
+    echo -e "║  ${GREEN}1.${NC}  Check Status                                 ║"
+    echo -e "║  ${GREEN}2.${NC}  Start Panel & Xray                         ║"
+    echo -e "║  ${GREEN}3.${NC}  Stop Panel & Xray                          ║"
+    echo -e "║  ${GREEN}4.${NC}  Restart Panel & Xray                       ║"
+    echo -e "║  ${GREEN}5.${NC}  View Panel Logs                            ║"
+    echo -e "║  ${GREEN}6.${NC}  View Xray Logs                             ║"
+    echo -e "╟──────────────────────────────────────────────────╢"
+    echo -e "║  ${GREEN}7.${NC}  Reset Username & Password                  ║"
+    echo -e "║  ${GREEN}8.${NC}  Change Panel Port                          ║"
+    echo -e "╟──────────────────────────────────────────────────╢"
+    echo -e "║  ${GREEN}9.${NC}  Update Panel                               ║"
+    echo -e "║  ${GREEN}10.${NC} Uninstall Panel                            ║"
+    echo -e "╟──────────────────────────────────────────────────╢"
+    echo -e "║  ${GREEN}0.${NC}  Exit                                       ║"
+    echo -e "╚══════════════════════════════════════════════════╝"
+}
+
+check_status() {
+    PANEL_STATUS=$(systemctl is-active v-ui)
+    XRAY_STATUS=$(systemctl is-active xray)
+    echo -e "\n--- Status ---"
+    if [ "$PANEL_STATUS" == "active" ]; then echo -e "Panel Status: ${GREEN}Running${NC}"; else echo -e "Panel Status: ${RED}Not Running${NC}"; fi
+    if [ "$XRAY_STATUS" == "active" ]; then echo -e "Xray Status:  ${GREEN}Running${NC}"; else echo -e "Xray Status:  ${RED}Not Running${NC}"; fi
+    echo "----------------"
+    read -p "Press [Enter] to return to the menu..."
+}
+
+run_action() {
+    systemctl $1 v-ui
+    systemctl $1 xray
+    echo -e "\nServices have been ${1}ed."
+    sleep 2
+}
+
+view_logs() {
+    journalctl -u $1 -f
+    read -p "Press [Enter] to return to the menu..."
+}
+
+reset_admin() {
+    read -p "Enter new username: " username
+    read -sp "Enter new password: " password
+    echo
+    cd /root/v-ui
+    source venv/bin/activate
+    python3 cli.py set-admin "$username" "$password"
+    deactivate
+    read -p "Press [Enter] to return to the menu..."
+}
+
+change_port() {
+    read -p "Enter new port: " port
+    cd /root/v-ui
+    source venv/bin/activate
+    python3 cli.py change-port "$port"
+    deactivate
+    read -p "Press [Enter] to return to the menu..."
+}
+
+update_panel() {
+    echo "This will re-download the installation script and run it."
+    read -p "Are you sure you want to update? (y/n): " confirm
+    if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+        curl -O https://raw.githubusercontent.com/mahdihadipoor/vpn-panel/main/install.sh
+        bash install.sh
+        exit 0
+    fi
+}
+
+uninstall_panel() {
+    read -p "This will stop services and remove all panel files. Are you sure? (y/n): " confirm
+     if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+        systemctl stop v-ui
+        systemctl disable v-ui
+        rm /etc/systemd/system/v-ui.service
+        systemctl daemon-reload
+        rm -rf /root/v-ui
+        rm /usr/local/bin/v-ui
+        echo "Panel uninstalled."
+    fi
+     read -p "Press [Enter] to exit..."
+}
+
+
+while true; do
+    show_menu
+    read -p "Please enter your selection [0-10]: " choice
+    case $choice in
+        1) check_status ;;
+        2) run_action "start" ;;
+        3) run_action "stop" ;;
+        4) run_action "restart" ;;
+        5) view_logs "v-ui" ;;
+        6) view_logs "xray" ;;
+        7) reset_admin ;;
+        8) change_port ;;
+        9) update_panel ;;
+        10) uninstall_panel ;;
+        0) exit 0 ;;
+        *) echo -e "${RED}Invalid option. Please try again.${NC}" && sleep 2 ;;
+    esac
+done
 EOF
     chmod +x /usr/local/bin/${SERVICE_NAME}
-    print_success "Management script created. You can now use 'v-ui' command."
+    print_success "Management script created. You can now use '${SERVICE_NAME}' command."
 }
 
 start_services() {
@@ -124,30 +231,21 @@ start_services() {
     systemctl daemon-reload
     systemctl enable ${SERVICE_NAME}
     systemctl start ${SERVICE_NAME}
-    # Ensure Xray is also running
     systemctl enable xray
     systemctl restart xray
 }
 
 display_final_info() {
-    # Get server IP
-    SERVER_IP=$(curl -s http://ip.sb)
+    SERVER_IP=$(curl -s4 icanhazip.com || curl -s6 icanhazip.com)
     
-    # Check services status
+    # Wait a moment for services to start
+    sleep 3
+
     PANEL_STATUS=$(systemctl is-active ${SERVICE_NAME})
     XRAY_STATUS=$(systemctl is-active xray)
 
-    if [ "$PANEL_STATUS" == "active" ]; then
-        PANEL_STATUS_COLOR="${GREEN}Running${NC}"
-    else
-        PANEL_STATUS_COLOR="${RED}Not Running${NC}"
-    fi
-
-    if [ "$XRAY_STATUS" == "active" ]; then
-        XRAY_STATUS_COLOR="${GREEN}Running${NC}"
-    else
-        XRAY_STATUS_COLOR="${RED}Not Running${NC}"
-    fi
+    if [ "$PANEL_STATUS" == "active" ]; then PANEL_STATUS_COLOR="${GREEN}Running${NC}"; else PANEL_STATUS_COLOR="${RED}Not Running${NC}"; fi
+    if [ "$XRAY_STATUS" == "active" ]; then XRAY_STATUS_COLOR="${GREEN}Running${NC}"; else XRAY_STATUS_COLOR="${RED}Not Running${NC}"; fi
 
     echo -e "\n╔══════════════════════════════════════════════════╗"
     echo -e "║              ${GREEN}V-UI Panel Installation Complete${NC}            ║"
@@ -167,6 +265,11 @@ display_final_info() {
 
 # --- Main Execution ---
 main() {
+    if [ "$(id -u)" != "0" ]; then
+       print_error "This script must be run as root" 
+       exit 1
+    fi
+    
     install_dependencies
     install_xray
     download_source
