@@ -1,8 +1,7 @@
 # app/models.py
 
-from sqlalchemy import Column, Integer, String, Boolean, BigInteger
-from .database import Base
 from sqlalchemy import Column, Integer, String, Boolean, BigInteger, ForeignKey
+from .database import Base
 from sqlalchemy.orm import relationship
 
 # ... (User and Settings models remain unchanged) ...
@@ -44,7 +43,7 @@ class Client(Base):
     
     inbound = relationship("Inbound", back_populates="clients")
 
-# --- NEW INBOUND TABLE ---
+# --- INBOUND TABLE UPDATED ---
 class Inbound(Base):
     __tablename__ = "inbounds"
 
@@ -54,6 +53,10 @@ class Inbound(Base):
     port = Column(Integer, unique=True, nullable=False)
     protocol = Column(String, nullable=False)
     
+    # New fields for total traffic and expiry
+    total_gb = Column(BigInteger, default=0)
+    expiry_time = Column(BigInteger, default=0)
+
     # This will now store inbound-specific settings (not clients)
     settings = Column(String, default='{}')
     stream_settings = Column(String, default='{}')
