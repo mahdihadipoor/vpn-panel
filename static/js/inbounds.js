@@ -195,7 +195,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         switch (action) {
             case 'expand':
-                // ... (rest of the switch cases)
                 const clientsRow = document.getElementById(`clients-row-${inboundId}`);
                 const isOpening = !clientsRow.classList.contains('active');
                 
@@ -223,8 +222,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const copySubLinkBtn = document.getElementById('copy-sub-link-btn');
                 const qrClientRemark = document.getElementById('qr-client-remark');
             
-                // 1. Handle Subscription
-                const subUrl = `${window.location.origin}/sub/${client.sub_token}`;
+                const subUrl = `${window.location.origin}/sub/${encodeURIComponent(client.sub_remark)}`;
                 generateQrCode(qrSubContainer, subUrl);
                 subLinkText.value = subUrl;
                 
@@ -234,7 +232,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     navigator.clipboard.writeText(subUrl).then(() => alert('Subscription link copied!'));
                 });
             
-                // 2. Handle Client Config
                 qrClientRemark.textContent = `Client: ${client.remark}`;
                 qrClientContainer.dataset.linkDomain = client.config_link_domain || '';
                 qrClientContainer.dataset.linkIp = client.config_link_ip || '';
@@ -258,14 +255,17 @@ document.addEventListener('DOMContentLoaded', () => {
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({ enabled: newStatus })
                     });
-                    client.enabled = newStatus;
+                    const allClients = Array.from(clientDataCache.values()).flat();
+                    allClients.forEach(c => {
+                        if (c.sub_remark === client.sub_remark) c.enabled = newStatus;
+                    });
+                    renderClients(inboundId, clientDataCache.get(inboundId));
                 } catch(e) {
-                    target.checked = !newStatus; // Revert on failure
+                    target.checked = !newStatus;
                 }
                 break;
             }
 
-            // ... other cases like delete, edit, etc.
             case 'delete-inbound': {
                 if (confirm(`Delete inbound #${inboundId}?`)) {
                     await apiCall(`/api/v1/inbounds/${inboundId}`, { method: 'DELETE' });

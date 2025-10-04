@@ -1,18 +1,19 @@
+# main.py
 import uvicorn, psutil, datetime, time, subprocess, socket, os, sys, threading, json, uuid, grpc, secrets, base64
 from fastapi import FastAPI, Request, Depends, Form, HTTPException, Body, Response, status, Header
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates # THIS IMPORT IS IMPORTANT
+from fastapi.templating import Jinja2Templates
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.orm import Session
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
+from urllib.parse import quote # THIS IS THE FIX
 
 from app import crud, models, security
 from app.database import SessionLocal, create_db_and_tables
 from app.xray_api import stats_pb2, stats_pb2_grpc
-
 
 create_db_and_tables()
 app = FastAPI()
@@ -122,32 +123,53 @@ class UpdateSubscription(BaseModel):
     reset_traffic: Optional[bool] = False
 
 # --- NEW: Public Subscription Routes ---
-@app.get("/sub/{token}")
+@app.get("/sub/{remark}")
 async def handle_subscription_request(
     request: Request, 
-    token: str, 
+    remark: str, 
     db: Session = Depends(get_db), 
     user_agent: Optional[str] = Header(None)
 ):
-    sub = crud.get_subscription_by_token(db, token)
+    sub = crud.get_subscription_by_remark(db, remark)
     if not sub or not sub.enabled:
         raise HTTPException(status_code=404, detail="Subscription not found or has been disabled.")
 
-    # List of keywords for VPN client User-Agents
     vpn_clients_ua = ["v2rayng", "nekoray", "shadowrocket", "clash", "hiddify", "sing-box", "v2box"]
-
     is_vpn_client = any(keyword in user_agent.lower() for keyword in vpn_clients_ua) if user_agent else False
 
-    # --- If request is from a VPN client, return raw configs ---
+    total_usage_bytes = crud.get_total_usage_for_subscription(db, sub.id)
+
     if is_vpn_client:
         settings = crud.get_settings(db)
         address = settings.domain_name or get_server_public_ip()
-        all_configs = []
+        
+        # --- Create the Fake Info Config ---
+        gb_total = sub.total_gb
+        gb_used = total_usage_bytes / (1024**3)
+        gb_left = gb_total - gb_used
+        
+        days_left_str = "∞"
+        if sub.expiry_time > 0:
+            days_left = (sub.expiry_time - time.time()) / (24 * 60 * 60)
+            if days_left > 0:
+                days_left_str = f"{int(days_left)} روز"
+            else:
+                days_left_str = "0 روز"
+
+        total_str = f"{gb_total:.2f}GB" if gb_total > 0 else "∞"
+        left_str = f"{gb_left:.2f}GB" if gb_total > 0 else "∞"
+        
+        fake_config_remark = f" ⏳ {days_left_str} | 🔋 {left_str} "
+        fake_config = f"vless://00000000-0000-0000-0000-000000000000@127.0.0.1:1080?type=tcp#{quote(fake_config_remark)}"
+        
+        all_configs = [fake_config]
+        # ---------------------------------
+
         for client in sub.clients:
             inbound = client.inbound
             stream_settings = json.loads(inbound.stream_settings)
             network = stream_settings.get("network", "tcp")
-            config_name = sub.remark
+            config_name = f"{inbound.remark}-{client.remark}"
             link = f"{inbound.protocol}://{client.uuid}@{address}:{inbound.port}"
             params = {"type": network, "security": stream_settings.get("security", "none")}
             if network == "ws":
@@ -158,15 +180,23 @@ async def handle_subscription_request(
                 grpc_opts = stream_settings.get("grpcSettings", {})
                 params["serviceName"] = grpc_opts.get("serviceName", "")
             query_string = "&".join([f"{k}={v}" for k, v in params.items()])
-            full_link = f"{link}?{query_string}#{config_name}"
+            full_link = f"{link}?{query_string}#{quote(config_name)}"
             all_configs.append(full_link)
         
         encoded_configs = base64.b64encode("\n".join(all_configs).encode("utf-8")).decode("utf-8")
-        return Response(content=encoded_configs, media_type="text/plain")
+        
+        response = Response(content=encoded_configs, media_type="text/plain")
+        response.headers["Profile-Title"] = sub.remark
+        user_info = (
+            f"upload={total_usage_bytes}; "
+            f"download=0; "
+            f"total={sub.total_gb * 1024 * 1024 * 1024}; "
+            f"expire={sub.expiry_time}"
+        )
+        response.headers["Subscription-Userinfo"] = user_info
+        return response
 
-    # --- Otherwise, return the HTML page with data ---
     else:
-        total_usage_bytes = crud.get_total_usage_for_subscription(db, sub.id)
         total_bytes = sub.total_gb * (1024**3)
         percentage = (total_usage_bytes / total_bytes * 100) if total_bytes > 0 else 0
         
@@ -178,7 +208,7 @@ async def handle_subscription_request(
             "total_gb_text": f"{sub.total_gb:.2f} GB" if sub.total_gb > 0 else "∞",
             "progress_percentage": min(percentage, 100),
             "expiry_text": datetime.datetime.fromtimestamp(sub.expiry_time).strftime('%Y-%m-%d') if sub.expiry_time > 0 else "Never",
-            "sub_link": str(request.url) # The current page URL is the subscription link
+            "sub_link": str(request.url)
         }
         return templates.TemplateResponse("subscription.html", context)
 
@@ -424,21 +454,30 @@ async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
                 needs_reload = True
     
     if needs_reload:
+        db.commit() # Commit the session to reflect disabled status before generating config
         if xray_manager.generate_config(db):
             xray_manager.apply_config()
     
     updated_clients = crud.get_clients_for_inbound(db, inbound_id)
-    inbound = crud.get_inbound_by_id(db, inbound_id) # Get inbound separately
+    inbound = crud.get_inbound_by_id(db, inbound_id)
     if not inbound: return []
 
     settings = crud.get_settings(db)
     domain_address = settings.domain_name if settings.domain_name else None
     ip_address = get_server_public_ip()
 
-    def generate_link(address, client_uuid, client_remark):
+    # Pre-calculate total usage for each subscription to avoid repeated DB calls
+    subscription_usages = {}
+    for client in updated_clients:
+        if client.subscription_id not in subscription_usages:
+            total_usage = crud.get_total_usage_for_subscription(db, client.subscription_id)
+            subscription_usages[client.subscription_id] = total_usage
+
+    def generate_link(address, client_uuid, client_remark, inbound_remark):
         if not address: return ""
         stream_settings = json.loads(inbound.stream_settings)
         network = stream_settings.get("network", "tcp")
+        config_name = f"{inbound_remark}-{client_remark}"
         link = f"{inbound.protocol}://{client_uuid}@{address}:{inbound.port}"
         params = {"type": network, "security": stream_settings.get("security", "none")}
         if network == "ws":
@@ -449,11 +488,16 @@ async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
             grpc_opts = stream_settings.get("grpcSettings", {})
             params["serviceName"] = grpc_opts.get("serviceName", "")
         query_string = "&".join([f"{k}={v}" for k, v in params.items()])
-        return f"{link}?{query_string}#{client_remark}"
+        return f"{link}?{query_string}#{quote(config_name)}"
 
     response_data = []
     for client in updated_clients:
         client_stats = live_stats.get(client.remark, {'up': 0, 'down': 0})
+        
+        # *** THIS IS THE MAIN CHANGE ***
+        # Use the pre-calculated total subscription usage for the progress bar
+        total_subscription_usage = subscription_usages.get(client.subscription_id, 0)
+        
         response_data.append({
             "id": client.id,
             "remark": client.remark,
@@ -461,13 +505,13 @@ async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
             "enabled": client.subscription.enabled,
             "total_gb": client.subscription.total_gb,
             "expiry_time": client.subscription.expiry_time,
-            "sub_token": client.subscription.sub_token, # THIS LINE IS ADDED
+            "sub_remark": client.subscription.remark,
             "up_traffic": client.up_traffic,
             "down_traffic": client.down_traffic,
-            "used_traffic_bytes": client.up_traffic + client.down_traffic,
+            "used_traffic_bytes": total_subscription_usage, # Use total usage here
             "online": (client_stats['up'] > 0 or client_stats['down'] > 0),
-            "config_link_ip": generate_link(ip_address, client.uuid, client.remark),
-            "config_link_domain": generate_link(domain_address, client.uuid, client.remark)
+            "config_link_ip": generate_link(ip_address, client.uuid, client.remark, inbound.remark),
+            "config_link_domain": generate_link(domain_address, client.uuid, client.remark, inbound.remark)
         })
         
     return response_data
