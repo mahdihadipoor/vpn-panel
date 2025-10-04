@@ -8,3 +8,4 @@ grpcio
 grpcio-tools
 typer
 python-multipart
+Jinja2
