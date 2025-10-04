@@ -1,21 +1,9 @@
 # main.py
-import uvicorn
-import psutil
-import datetime
-import time
-import subprocess
-import socket
-import os
-import sys
-import threading
-import json
-import uuid
-import grpc
-import secrets
-
+import uvicorn, psutil, datetime, time, subprocess, socket, os, sys, threading, json, uuid, grpc, secrets, base64
 from fastapi import FastAPI, Request, Depends, Form, HTTPException, Body, Response, status
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
 from sqlalchemy.orm import Session
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -26,12 +14,37 @@ from app.database import SessionLocal, create_db_and_tables
 from app.xray_api import stats_pb2, stats_pb2_grpc
 
 create_db_and_tables()
-
 app = FastAPI()
 BASE_DIR = Path(__file__).resolve().parent
-
 app.mount("/static", StaticFiles(directory=str(Path(BASE_DIR, 'static'))), name="static")
 
+# --- Helper functions & Auth ---
+def get_db():
+    db = SessionLocal()
+    try: yield db
+    finally: db.close()
+
+async def get_current_user(request: Request, db: Session = Depends(get_db)):
+    token = request.cookies.get("session_token")
+    if not token: return None
+    return crud.get_user_by_session_token(db, token=token)
+
+async def require_auth(user: models.User = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(status_code=status.HTTP_307_TEMPORARY_REDIRECT, headers={"Location": "/"})
+    return user
+    
+# --- Detailed Error Logging for 422 ---
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    print("\n--- Validation Error ---")
+    print(f"URL: {request.url}")
+    print(f"Details: {exc.errors()}")
+    print("--- End Validation Error ---\n")
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": exc.errors()},
+    )
 
 # --- Global variables for network speed calculation ---
 last_net_io = psutil.net_io_counters()
@@ -41,31 +54,24 @@ last_time = time.time()
 
 
 # --- Xray API Client ---
+# --- Other Helper Functions ---
 def get_xray_stats(emails: List[str]):
     try:
         channel = grpc.insecure_channel('127.0.0.1:62789')
         stub = stats_pb2_grpc.StatsServiceStub(channel)
-        
         traffic_data = {}
-        
         req = stats_pb2.QueryStatsRequest(pattern="user>>>", reset=True)
         res = stub.QueryStats(req)
-        
         for stat in res.stat:
             parts = stat.name.split('>>>')
             if len(parts) == 4 and parts[0] == 'user':
-                email = parts[1]
-                direction = parts[3]
-                value = stat.value
-
+                email, direction = parts[1], parts[3]
                 if email not in traffic_data:
                     traffic_data[email] = {'up': 0, 'down': 0}
-                
                 if direction == 'uplink':
-                    traffic_data[email]['up'] += value
+                    traffic_data[email]['up'] += stat.value
                 elif direction == 'downlink':
-                    traffic_data[email]['down'] += value
-        
+                    traffic_data[email]['down'] += stat.value
         return traffic_data
     except Exception as e:
         print(f"Could not connect to Xray API: {e}")
@@ -101,28 +107,129 @@ def get_xray_version():
         return output.splitlines()[0]
     return "Not Found"
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
-async def get_current_user(request: Request, db: Session = Depends(get_db)):
-    token = request.cookies.get("session_token")
-    if not token:
-        return None
-    user = crud.get_user_by_session_token(db, token=token)
-    return user
+class CreateSubscription(BaseModel):
+    remark: str
+    total_mb: int = Field(0, ge=0)
+    expiry_days: int = Field(0, ge=0)
 
-async def require_auth(user: models.User = Depends(get_current_user)):
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
-            headers={"Location": "/"},
-        )
-    return user
+class AddClientToSubscription(BaseModel):
+    inbound_id: int
 
+class UpdateSubscription(BaseModel):
+    enabled: Optional[bool] = None
+    total_mb: Optional[int] = Field(None, ge=0)
+    expiry_days: Optional[int] = Field(None)
+    reset_traffic: Optional[bool] = False
+
+# --- NEW: Public Subscription Routes ---
+@app.get("/sub/{token}", response_class=HTMLResponse)
+async def get_subscription_page(token: str, db: Session = Depends(get_db)):
+    sub = crud.get_subscription_by_token(db, token)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+    # This HTML file will be created in the next step
+    return FileResponse(str(Path(BASE_DIR, 'templates', 'subscription.html')))
+
+@app.get("/sub/{token}/info")
+async def get_subscription_info_for_page(token: str, db: Session = Depends(get_db)):
+    sub = crud.get_subscription_by_token(db, token)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+
+    total_usage_bytes = crud.get_total_usage_for_subscription(db, sub.id)
+    
+    return {
+        "remark": sub.remark,
+        "total_gb": sub.total_gb,
+        "used_bytes": total_usage_bytes,
+        "expiry_time": sub.expiry_time,
+        "enabled": sub.enabled,
+        "sub_link": f"/sub/{token}/configs"
+    }
+
+@app.get("/sub/{token}/configs")
+async def get_subscription_configs_for_app(token: str, db: Session = Depends(get_db)):
+    sub = crud.get_subscription_by_token(db, token)
+    if not sub or not sub.enabled:
+        return Response(status_code=404)
+
+    settings = crud.get_settings(db)
+    address = settings.domain_name or get_server_public_ip()
+    
+    all_configs = []
+    for client in sub.clients:
+        inbound = client.inbound
+        stream_settings = json.loads(inbound.stream_settings)
+        network = stream_settings.get("network", "tcp")
+        
+        # Use subscription remark for the config name
+        config_name = sub.remark 
+        
+        link = f"{inbound.protocol}://{client.uuid}@{address}:{inbound.port}"
+        params = {"type": network, "security": stream_settings.get("security", "none")}
+        if network == "ws":
+            ws_opts = stream_settings.get("wsSettings", {})
+            params["path"] = ws_opts.get("path", "/")
+            params["host"] = ws_opts.get("headers", {}).get("Host", address)
+        elif network == "grpc":
+            grpc_opts = stream_settings.get("grpcSettings", {})
+            params["serviceName"] = grpc_opts.get("serviceName", "")
+        
+        query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+        full_link = f"{link}?{query_string}#{config_name}"
+        all_configs.append(full_link)
+    
+    encoded_configs = base64.b64encode("\n".join(all_configs).encode("utf-8")).decode("utf-8")
+    return Response(content=encoded_configs, media_type="text/plain")
+
+
+# --- NEW: Subscription API Endpoints ---
+@app.get("/api/v1/subscriptions", dependencies=[Depends(require_auth)])
+async def read_subscriptions(db: Session = Depends(get_db)):
+    return crud.get_subscriptions(db)
+
+@app.post("/api/v1/subscriptions", dependencies=[Depends(require_auth)])
+async def create_subscription_endpoint(sub_data: CreateSubscription, db: Session = Depends(get_db)):
+    total_gb = sub_data.total_mb / 1024 if sub_data.total_mb > 0 else 0
+    expiry_time = 0
+    if sub_data.expiry_days > 0:
+        expiry_time = int(time.time()) + (sub_data.expiry_days * 24 * 60 * 60)
+    
+    return crud.create_subscription(db, remark=sub_data.remark, total_gb=total_gb, expiry_time=expiry_time)
+
+@app.put("/api/v1/subscriptions/{sub_id}", dependencies=[Depends(require_auth)])
+async def update_subscription_endpoint(sub_id: int, sub_data: UpdateSubscription, db: Session = Depends(get_db)):
+    update_data = {}
+    if sub_data.enabled is not None:
+        update_data["enabled"] = sub_data.enabled
+    if sub_data.total_mb is not None:
+        update_data["total_gb"] = sub_data.total_mb / 1024
+    if sub_data.expiry_days is not None:
+        if sub_data.expiry_days > 0:
+            update_data["expiry_time"] = int(time.time()) + (sub_data.expiry_days * 24 * 60 * 60)
+        else:
+            update_data["expiry_time"] = 0
+    
+    updated_sub = crud.update_subscription(db, sub_id, update_data)
+
+    if sub_data.reset_traffic:
+        crud.reset_traffic_for_subscription(db, sub_id)
+
+    if not updated_sub:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+        
+    return updated_sub
+
+@app.post("/api/v1/subscriptions/{sub_id}/clients", dependencies=[Depends(require_auth)])
+async def add_client_to_subscription_endpoint(sub_id: int, client_data: AddClientToSubscription, db: Session = Depends(get_db)):
+    new_client = crud.create_client(db, inbound_id=client_data.inbound_id, subscription_id=sub_id)
+    
+    if xray_manager.generate_config(db):
+        xray_manager.apply_config()
+        
+    return new_client
+   
 # --- Page and Auth Routes ---
 @app.get("/", response_class=HTMLResponse)
 async def read_root(user: models.User = Depends(get_current_user)):
@@ -267,8 +374,9 @@ class UpdateInbound(BaseModel):
 
 class CreateClient(BaseModel):
     remark: str
+    subscription_remark: str
     total_mb: int = Field(0, ge=0)
-    expiry_time: int = Field(0, ge=0)
+    expiry_days: int = Field(0, ge=0)
 
 class UpdateClient(BaseModel):
     enabled: Optional[bool] = None
@@ -385,22 +493,20 @@ async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
         
     return updated_clients
 
-
 @app.post("/api/v1/inbounds/{inbound_id}/clients", dependencies=[Depends(require_auth)])
-async def add_client_for_inbound(inbound_id: int, client_data: CreateClient, db: Session = Depends(get_db)):
-    total_gb = client_data.total_mb / 1024 if client_data.total_mb > 0 else 0
+async def add_client_to_inbound(inbound_id: int, client_data: CreateClient, db: Session = Depends(get_db)):
+    subscription = crud.get_subscription_by_remark(db, client_data.subscription_remark)
+    if not subscription:
+        total_gb = client_data.total_mb / 1024 if client_data.total_mb > 0 else 0
+        expiry_time = 0
+        if client_data.expiry_days > 0:
+            expiry_time = int(time.time()) + (client_data.expiry_days * 24 * 60 * 60)
+        subscription = crud.create_subscription(db, remark=client_data.subscription_remark, total_gb=total_gb, expiry_time=expiry_time)
     
-    new_client = crud.create_client(
-        db, 
-        inbound_id=inbound_id, 
-        remark=client_data.remark,
-        total_gb=total_gb,
-        expiry_time=client_data.expiry_time
-    )
+    new_client = crud.create_client(db, inbound_id=inbound_id, subscription_id=subscription.id, remark=client_data.remark)
     
     if xray_manager.generate_config(db):
         xray_manager.apply_config()
-        
     return new_client
 
 @app.delete("/api/v1/clients/{client_id}", dependencies=[Depends(require_auth)])
