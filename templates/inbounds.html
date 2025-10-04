@@ -43,19 +43,6 @@
         .online-status.online { color: var(--status-running); }
         .online-status.offline .dot { background-color: #ced4da; }
         .online-status.offline { color: var(--text-secondary); }
-        .qr-host-toggle {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 13px;
-            color: var(--text-secondary);
-        }
-        .modal-header {
-            display: grid;
-            grid-template-columns: 1fr auto auto;
-            align-items: center;
-            gap: 16px;
-        }
     </style>
 </head>
 <body>
@@ -176,16 +163,32 @@
         </div>
     </div>
     <div class="modal-overlay" id="qr-code-modal">
-        <div class="modal-content qr-modal-content">
-            <div class="modal-header">
-                <h2 id="qr-code-remark">QR Code</h2>
-                 <div class="qr-host-toggle">
-                    <span>Use IPv4 for host</span>
-                    <label class="switch"><input type="checkbox" id="qr-use-ip-toggle"><span class="slider"></span></label>
-                </div>
+        <div class="modal-content" style="max-width: 700px;">
+            <div class="modal-header" style="display: flex;">
+                <h2>QR Codes & Subscription Link</h2>
                 <button class="close-modal-btn" type="button">&times;</button>
             </div>
-            <div class="modal-body qr-modal-body" id="qr-code-container"></div>
+            <div class="modal-body" style="display: flex; gap: 20px; justify-content: space-around; text-align: center;">
+                
+                <div>
+                    <h4>Subscription</h4>
+                    <div id="qr-sub-container" style="padding: 10px; border: 1px solid #eee; border-radius: 8px; margin-bottom: 10px; min-width: 220px; min-height: 220px;"></div>
+                    <div style="margin-top: 10px;">
+                        <input type="text" id="sub-link-text" readonly style="width: 100%; padding: 8px; text-align: center; border: 1px solid var(--border-color); border-radius: 6px; margin-bottom: 5px; background-color: #f8f9fa;">
+                        <button id="copy-sub-link-btn" class="btn btn-secondary btn-sm">Copy Link</button>
+                    </div>
+                </div>
+
+                <div>
+                    <h4 id="qr-client-remark">Client Config</h4>
+                    <div id="qr-client-container" style="padding: 10px; border: 1px solid #eee; border-radius: 8px; margin-bottom: 10px; min-width: 220px; min-height: 220px;"></div>
+                    <div class="qr-host-toggle" style="display: flex; justify-content: center; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary);">
+                        <span>Use IPv4 for host</span>
+                        <label class="switch"><input type="checkbox" id="qr-use-ip-toggle"><span class="slider"></span></label>
+                    </div>
+                </div>
+
+            </div>
         </div>
     </div>
     <div class="modal-overlay" id="edit-client-modal">

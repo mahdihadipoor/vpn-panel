@@ -1,10 +1,10 @@
-# main.py
 import uvicorn, psutil, datetime, time, subprocess, socket, os, sys, threading, json, uuid, grpc, secrets, base64
-from fastapi import FastAPI, Request, Depends, Form, HTTPException, Body, Response, status
+from fastapi import FastAPI, Request, Depends, Form, HTTPException, Body, Response, status, Header
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates # THIS IMPORT IS IMPORTANT
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -13,10 +13,13 @@ from app import crud, models, security
 from app.database import SessionLocal, create_db_and_tables
 from app.xray_api import stats_pb2, stats_pb2_grpc
 
+
 create_db_and_tables()
 app = FastAPI()
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(Path(BASE_DIR, 'static'))), name="static")
+
+templates = Jinja2Templates(directory=str(Path(BASE_DIR, "templates")))
 
 # --- Error Logging ---
 @app.exception_handler(RequestValidationError)
@@ -119,65 +122,65 @@ class UpdateSubscription(BaseModel):
     reset_traffic: Optional[bool] = False
 
 # --- NEW: Public Subscription Routes ---
-@app.get("/sub/{token}", response_class=HTMLResponse)
-async def get_subscription_page(token: str, db: Session = Depends(get_db)):
-    sub = crud.get_subscription_by_token(db, token)
-    if not sub:
-        raise HTTPException(status_code=404, detail="Subscription not found")
-    # This HTML file will be created in the next step
-    return FileResponse(str(Path(BASE_DIR, 'templates', 'subscription.html')))
-
-@app.get("/sub/{token}/info")
-async def get_subscription_info_for_page(token: str, db: Session = Depends(get_db)):
-    sub = crud.get_subscription_by_token(db, token)
-    if not sub:
-        raise HTTPException(status_code=404, detail="Subscription not found")
-
-    total_usage_bytes = crud.get_total_usage_for_subscription(db, sub.id)
-    
-    return {
-        "remark": sub.remark,
-        "total_gb": sub.total_gb,
-        "used_bytes": total_usage_bytes,
-        "expiry_time": sub.expiry_time,
-        "enabled": sub.enabled,
-        "sub_link": f"/sub/{token}/configs"
-    }
-
-@app.get("/sub/{token}/configs")
-async def get_subscription_configs_for_app(token: str, db: Session = Depends(get_db)):
+@app.get("/sub/{token}")
+async def handle_subscription_request(
+    request: Request, 
+    token: str, 
+    db: Session = Depends(get_db), 
+    user_agent: Optional[str] = Header(None)
+):
     sub = crud.get_subscription_by_token(db, token)
     if not sub or not sub.enabled:
-        return Response(status_code=404)
+        raise HTTPException(status_code=404, detail="Subscription not found or has been disabled.")
 
-    settings = crud.get_settings(db)
-    address = settings.domain_name or get_server_public_ip()
-    
-    all_configs = []
-    for client in sub.clients:
-        inbound = client.inbound
-        stream_settings = json.loads(inbound.stream_settings)
-        network = stream_settings.get("network", "tcp")
+    # List of keywords for VPN client User-Agents
+    vpn_clients_ua = ["v2rayng", "nekoray", "shadowrocket", "clash", "hiddify", "sing-box", "v2box"]
+
+    is_vpn_client = any(keyword in user_agent.lower() for keyword in vpn_clients_ua) if user_agent else False
+
+    # --- If request is from a VPN client, return raw configs ---
+    if is_vpn_client:
+        settings = crud.get_settings(db)
+        address = settings.domain_name or get_server_public_ip()
+        all_configs = []
+        for client in sub.clients:
+            inbound = client.inbound
+            stream_settings = json.loads(inbound.stream_settings)
+            network = stream_settings.get("network", "tcp")
+            config_name = sub.remark
+            link = f"{inbound.protocol}://{client.uuid}@{address}:{inbound.port}"
+            params = {"type": network, "security": stream_settings.get("security", "none")}
+            if network == "ws":
+                ws_opts = stream_settings.get("wsSettings", {})
+                params["path"] = ws_opts.get("path", "/")
+                params["host"] = ws_opts.get("headers", {}).get("Host", address)
+            elif network == "grpc":
+                grpc_opts = stream_settings.get("grpcSettings", {})
+                params["serviceName"] = grpc_opts.get("serviceName", "")
+            query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+            full_link = f"{link}?{query_string}#{config_name}"
+            all_configs.append(full_link)
         
-        # Use subscription remark for the config name
-        config_name = sub.remark 
+        encoded_configs = base64.b64encode("\n".join(all_configs).encode("utf-8")).decode("utf-8")
+        return Response(content=encoded_configs, media_type="text/plain")
+
+    # --- Otherwise, return the HTML page with data ---
+    else:
+        total_usage_bytes = crud.get_total_usage_for_subscription(db, sub.id)
+        total_bytes = sub.total_gb * (1024**3)
+        percentage = (total_usage_bytes / total_bytes * 100) if total_bytes > 0 else 0
         
-        link = f"{inbound.protocol}://{client.uuid}@{address}:{inbound.port}"
-        params = {"type": network, "security": stream_settings.get("security", "none")}
-        if network == "ws":
-            ws_opts = stream_settings.get("wsSettings", {})
-            params["path"] = ws_opts.get("path", "/")
-            params["host"] = ws_opts.get("headers", {}).get("Host", address)
-        elif network == "grpc":
-            grpc_opts = stream_settings.get("grpcSettings", {})
-            params["serviceName"] = grpc_opts.get("serviceName", "")
-        
-        query_string = "&".join([f"{k}={v}" for k, v in params.items()])
-        full_link = f"{link}?{query_string}#{config_name}"
-        all_configs.append(full_link)
-    
-    encoded_configs = base64.b64encode("\n".join(all_configs).encode("utf-8")).decode("utf-8")
-    return Response(content=encoded_configs, media_type="text/plain")
+        context = {
+            "request": request,
+            "remark": sub.remark,
+            "enabled": sub.enabled,
+            "used_gb": f"{(total_usage_bytes / (1024**3)):.2f}",
+            "total_gb_text": f"{sub.total_gb:.2f} GB" if sub.total_gb > 0 else "∞",
+            "progress_percentage": min(percentage, 100),
+            "expiry_text": datetime.datetime.fromtimestamp(sub.expiry_time).strftime('%Y-%m-%d') if sub.expiry_time > 0 else "Never",
+            "sub_link": str(request.url) # The current page URL is the subscription link
+        }
+        return templates.TemplateResponse("subscription.html", context)
 
 
 # --- NEW: Subscription API Endpoints ---
@@ -401,36 +404,31 @@ async def remove_inbound(inbound_id: int, db: Session = Depends(get_db)):
 async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
     clients = crud.get_clients_for_inbound(db, inbound_id)
     if not clients: return []
+
     client_remarks = [c.remark for c in clients]
     live_stats = get_xray_stats(client_remarks)
+    
+    if live_stats:
+        crud.update_clients_traffic(db, live_stats)
+
     needs_reload = False
     now = int(time.time())
 
     for client in clients:
-        stats = live_stats.get(client.remark)
-        if stats:
-            client.up_traffic += stats['up']
-            client.down_traffic += stats['down']
-        
-        # FIX: Check subscription's enabled status
         if client.subscription.enabled:
             total_usage_bytes = crud.get_total_usage_for_subscription(db, client.subscription_id)
             limit_bytes = client.subscription.total_gb * 1024 * 1024 * 1024
             if (limit_bytes > 0 and total_usage_bytes >= limit_bytes) or \
                (client.subscription.expiry_time > 0 and now >= client.subscription.expiry_time):
-                
                 crud.update_subscription(db, client.subscription_id, {"enabled": False})
                 needs_reload = True
     
-    if traffic_to_update:
-        crud.update_clients_traffic(db, traffic_to_update)
-
     if needs_reload:
         if xray_manager.generate_config(db):
             xray_manager.apply_config()
     
     updated_clients = crud.get_clients_for_inbound(db, inbound_id)
-    inbound = updated_clients[0].inbound if updated_clients else None
+    inbound = crud.get_inbound_by_id(db, inbound_id) # Get inbound separately
     if not inbound: return []
 
     settings = crud.get_settings(db)
@@ -453,12 +451,26 @@ async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
         query_string = "&".join([f"{k}={v}" for k, v in params.items()])
         return f"{link}?{query_string}#{client_remark}"
 
+    response_data = []
     for client in updated_clients:
-        client.used_traffic_bytes = client.up_traffic + client.down_traffic
-        client.config_link_ip = generate_link(ip_address, client.uuid, client.remark)
-        client.config_link_domain = generate_link(domain_address, client.uuid, client.remark)
+        client_stats = live_stats.get(client.remark, {'up': 0, 'down': 0})
+        response_data.append({
+            "id": client.id,
+            "remark": client.remark,
+            "uuid": client.uuid,
+            "enabled": client.subscription.enabled,
+            "total_gb": client.subscription.total_gb,
+            "expiry_time": client.subscription.expiry_time,
+            "sub_token": client.subscription.sub_token, # THIS LINE IS ADDED
+            "up_traffic": client.up_traffic,
+            "down_traffic": client.down_traffic,
+            "used_traffic_bytes": client.up_traffic + client.down_traffic,
+            "online": (client_stats['up'] > 0 or client_stats['down'] > 0),
+            "config_link_ip": generate_link(ip_address, client.uuid, client.remark),
+            "config_link_domain": generate_link(domain_address, client.uuid, client.remark)
+        })
         
-    return updated_clients
+    return response_data
 
 @app.post("/api/v1/inbounds/{inbound_id}/clients", dependencies=[Depends(require_auth)])
 async def add_client_to_inbound(inbound_id: int, client_data: CreateClient, db: Session = Depends(get_db)):
@@ -492,27 +504,32 @@ async def remove_client(client_id: int, db: Session = Depends(get_db)):
 
 @app.put("/api/v1/clients/{client_id}", dependencies=[Depends(require_auth)])
 async def update_client_data(client_id: int, client_data: UpdateClient, db: Session = Depends(get_db)):
-    update_data = client_data.dict(exclude_unset=True)
+    db_client = crud.get_client_by_id(db, client_id)
+    if not db_client:
+        raise HTTPException(status_code=404, detail="Client not found.")
+
+    sub_update_data = {}
+    if client_data.enabled is not None:
+        sub_update_data["enabled"] = client_data.enabled
     
     if client_data.total_mb is not None:
-        update_data["total_gb"] = client_data.total_mb / 1024
-        del update_data["total_mb"]
-    
-    if client_data.reset_traffic:
-        update_data["up_traffic"] = 0
-        update_data["down_traffic"] = 0
-    
-    update_data.pop("reset_traffic", None)
+        sub_update_data["total_gb"] = client_data.total_mb / 1024 if client_data.total_mb > 0 else 0
 
-    updated_client = crud.update_client(db, client_id, update_data)
-    if not updated_client:
-        raise HTTPException(status_code=404, detail="Client not found.")
-    
-    if 'enabled' in update_data:
+    if client_data.expiry_time is not None:
+        sub_update_data["expiry_time"] = client_data.expiry_time
+
+    if sub_update_data:
+        crud.update_subscription(db, db_client.subscription_id, sub_update_data)
+
+    if client_data.reset_traffic:
+        crud.reset_traffic_for_subscription(db, db_client.subscription_id)
+
+    if 'enabled' in sub_update_data:
         if xray_manager.generate_config(db):
             xray_manager.apply_config()
-
-    return updated_client
+    
+    updated_sub = crud.get_subscription_by_id(db, db_client.subscription_id)
+    return {"status": "success", "subscription_id": updated_sub.id}
 
 # --- System & Panel API Routes (Unchanged) ---
 @app.get("/api/v1/system/stats", dependencies=[Depends(require_auth)])

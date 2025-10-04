@@ -13,79 +13,42 @@
     <div class="sub-container">
         <div class="sub-card">
             <div class="sub-header">
-                <h1 id="sub-remark">Loading...</h1>
-                <span class="status-badge" id="sub-status">--</span>
+                <h1 id="sub-remark">{{ remark }}</h1>
+                <span class="status-badge {{ 'active' if enabled else 'expired' }}">
+                    {{ 'Active' if enabled else 'Expired' }}
+                </span>
             </div>
             <div class="sub-body">
                 <div class="info-row">
                     <div class="info-label">
                         <span>Traffic Usage</span>
-                        <span id="traffic-info">-- / -- GB</span>
+                        <span id="traffic-info">{{ used_gb }} GB / {{ total_gb_text }}</span>
                     </div>
                     <div class="progress-bar">
-                        <div class="progress-fill" id="progress-fill" style="width: 0%;"></div>
+                        <div class="progress-fill" id="progress-fill" style="width: {{ progress_percentage }}%;"></div>
                     </div>
                 </div>
                 <div class="info-row">
                     <div class="info-label">
                         <span>Expires On</span>
-                        <span id="expiry-info">--</span>
+                        <span id="expiry-info">{{ expiry_text }}</span>
                     </div>
                 </div>
             </div>
             <div class="sub-footer">
                 <button class="btn-import" id="copy-link">Copy Subscription Link</button>
-                <a class="btn-import" id="import-v2rayng">Add to V2RayNG</a>
-                <a class="btn-import" id="import-hiddify">Add to Hiddify</a>
+                <a class="btn-import" id="import-v2rayng" href="v2rayng://install-config?url={{ sub_link | urlencode }}">Add to V2RayNG</a>
+                <a class="btn-import" id="import-hiddify" href="hiddify://install-config?url={{ sub_link | urlencode }}">Add to Hiddify</a>
             </div>
         </div>
     </div>
     <script>
-        document.addEventListener('DOMContentLoaded', async () => {
-            const token = window.location.pathname.split('/')[2];
-            const subLink = `${window.location.origin}/sub/${token}/configs`;
-
-            const remarkEl = document.getElementById('sub-remark');
-            const statusEl = document.getElementById('sub-status');
-            const trafficInfoEl = document.getElementById('traffic-info');
-            const progressFillEl = document.getElementById('progress-fill');
-            const expiryInfoEl = document.getElementById('expiry-info');
-
-            const importV2rayng = document.getElementById('import-v2rayng');
-            const importHiddify = document.getElementById('import-hiddify');
-            const copyLinkBtn = document.getElementById('copy-link');
-
-            importV2rayng.href = `v2rayng://install-config?url=${encodeURIComponent(subLink)}`;
-            importHiddify.href = `hiddify://install-config?url=${encodeURIComponent(subLink)}`;
-            copyLinkBtn.addEventListener('click', () => {
-                navigator.clipboard.writeText(subLink).then(() => alert('Subscription link copied!'));
+        // Simple script to handle the copy button functionality
+        document.getElementById('copy-link').addEventListener('click', () => {
+            const subLink = "{{ sub_link }}";
+            navigator.clipboard.writeText(subLink).then(() => {
+                alert('Subscription link copied!');
             });
-
-            try {
-                const response = await fetch(`/sub/${token}/info`);
-                const data = await response.json();
-
-                remarkEl.textContent = data.remark;
-                statusEl.textContent = data.enabled ? 'Active' : 'Expired';
-                statusEl.classList.add(data.enabled ? 'active' : 'expired');
-
-                const totalBytes = data.total_gb * 1024 * 1024 * 1024;
-                const usedGB = (data.used_bytes / (1024**3)).toFixed(2);
-                const totalGBText = data.total_gb > 0 ? `${data.total_gb.toFixed(2)} GB` : '∞';
-                trafficInfoEl.textContent = `${usedGB} GB / ${totalGBText}`;
-
-                const percentage = totalBytes > 0 ? (data.used_bytes / totalBytes) * 100 : 0;
-                progressFillEl.style.width = `${Math.min(percentage, 100)}%`;
-
-                if (data.expiry_time > 0) {
-                    expiryInfoEl.textContent = new Date(data.expiry_time * 1000).toLocaleDateString();
-                } else {
-                    expiryInfoEl.textContent = 'Never';
-                }
-
-            } catch (e) {
-                document.body.innerHTML = '<h1>Subscription not found or has expired.</h1>';
-            }
         });
     </script>
 </body>
