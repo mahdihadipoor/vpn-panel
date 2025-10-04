@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request, Depends, Form, HTTPException, Body, Respon
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -17,6 +17,13 @@ create_db_and_tables()
 app = FastAPI()
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(Path(BASE_DIR, 'static'))), name="static")
+
+# --- Error Logging ---
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    print(f"\n--- Validation Error ---\nURL: {request.url}\nDetails: {exc.errors()}\n--- End Validation Error ---\n")
+    return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": exc.errors()})
+
 
 # --- Helper functions & Auth ---
 def get_db():
@@ -34,17 +41,6 @@ async def require_auth(user: models.User = Depends(get_current_user)):
         raise HTTPException(status_code=status.HTTP_307_TEMPORARY_REDIRECT, headers={"Location": "/"})
     return user
     
-# --- Detailed Error Logging for 422 ---
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    print("\n--- Validation Error ---")
-    print(f"URL: {request.url}")
-    print(f"Details: {exc.errors()}")
-    print("--- End Validation Error ---\n")
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": exc.errors()},
-    )
 
 # --- Global variables for network speed calculation ---
 last_net_io = psutil.net_io_counters()
@@ -292,68 +288,46 @@ class XrayManager:
         self.config_path = config_path
 
     def generate_config(self, db: Session):
-        config = {
-            "log": { "loglevel": "warning" },
+        config = { "log": { "loglevel": "warning" } }
+        config.update({
             "api": { "tag": "api", "services": ["StatsService"] },
             "stats": {},
             "policy": {
                 "levels": { "0": { "statsUserUplink": True, "statsUserDownlink": True } },
                 "system": { "statsInboundUplink": True, "statsInboundDownlink": True }
             },
-            "inbounds": [
-                { "tag": "api", "listen": "127.0.0.1", "port": 62789, "protocol": "dokodemo-door", "settings": { "address": "127.0.0.1" } }
-            ],
-            "outbounds": [
-                { "protocol": "freedom", "tag": "direct" },
-                { "protocol": "blackhole", "tag": "api" }
-            ],
-            "routing": {
-                "domainStrategy": "AsIs",
-                "rules": [ { "type": "field", "inboundTag": ["api"], "outboundTag": "api" } ]
-            }
-        }
-        
-        all_inbounds = crud.get_inbounds(db)
+            "inbounds": [{ "tag": "api", "listen": "127.0.0.1", "port": 62789, "protocol": "dokodemo-door", "settings": { "address": "127.0.0.1" } }],
+            "outbounds": [{ "protocol": "freedom", "tag": "direct" }, { "protocol": "blackhole", "tag": "api" }],
+            "routing": { "domainStrategy": "AsIs", "rules": [ { "type": "field", "inboundTag": ["api"], "outboundTag": "api" } ] }
+        })
 
+        all_inbounds = crud.get_inbounds(db)
         for inbound in all_inbounds:
             if not inbound.enabled: continue
-
             clients_for_this_inbound = crud.get_clients_for_inbound(db, inbound.id)
             
-            xray_clients = []
-            if inbound.protocol == "vless":
-                xray_clients = [{"id": c.uuid, "email": c.remark, "level": 0} for c in clients_for_this_inbound if c.enabled]
-            elif inbound.protocol == "vmess":
-                xray_clients = [{"id": c.uuid, "alterId": 0, "email": c.remark, "level": 0} for c in clients_for_this_inbound if c.enabled]
+            xray_clients = [{"id": c.uuid, "email": c.remark, "level": 0} for c in clients_for_this_inbound if c.subscription.enabled]
             
             if not xray_clients: continue
-
             stream_settings = json.loads(inbound.stream_settings)
-
             xray_inbound = {
-                "port": inbound.port,
-                "listen": "0.0.0.0",
-                "protocol": inbound.protocol,
+                "port": inbound.port, "listen": "0.0.0.0", "protocol": inbound.protocol,
                 "settings": { "clients": xray_clients, "decryption": "none" },
-                "streamSettings": stream_settings,
-                "tag": f"inbound-{inbound.port}"
+                "streamSettings": stream_settings, "tag": f"inbound-{inbound.port}"
             }
             config["inbounds"].append(xray_inbound)
         
         try:
-            with open(self.config_path, 'w') as f:
-                json.dump(config, f, indent=4)
-            print("Successfully generated config based on working example.")
+            with open(self.config_path, 'w') as f: json.dump(config, f, indent=4)
             return True
         except Exception as e:
             print(f"FATAL: Error writing Xray config: {e}")
             return False
 
     def apply_config(self):
-        print("Applying new Xray config and restarting service...")
         return run_shell_command("sudo systemctl restart xray.service")
-
 xray_manager = XrayManager()
+
 
 # --- Pydantic Models for API Validation ---
 class StreamSettings(BaseModel):
@@ -427,12 +401,8 @@ async def remove_inbound(inbound_id: int, db: Session = Depends(get_db)):
 async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
     clients = crud.get_clients_for_inbound(db, inbound_id)
     if not clients: return []
-        
-    client_emails = [c.remark for c in clients]
-    live_stats = get_xray_stats(client_emails)
-    
-    # ... (بخش مربوط به بررسی ترافیک و تاریخ انقضا بدون تغییر باقی می‌ماند) ...
-    traffic_to_update = {}
+    client_remarks = [c.remark for c in clients]
+    live_stats = get_xray_stats(client_remarks)
     needs_reload = False
     now = int(time.time())
 
@@ -441,19 +411,16 @@ async def update_and_get_stats(inbound_id: int, db: Session = Depends(get_db)):
         if stats:
             client.up_traffic += stats['up']
             client.down_traffic += stats['down']
-            traffic_to_update[str(client.id)] = {'up': client.up_traffic, 'down': client.down_traffic}
-            client.online = (stats['up'] > 0 or stats['down'] > 0)
-        else:
-            client.online = False
-
-        if client.enabled:
-            total_used = client.up_traffic + client.down_traffic
-            limit_bytes = client.total_gb * 1024 * 1024 * 1024
-
-            if (limit_bytes > 0 and total_used >= limit_bytes) or (client.expiry_time > 0 and now >= client.expiry_time):
-                client.enabled = False
+        
+        # FIX: Check subscription's enabled status
+        if client.subscription.enabled:
+            total_usage_bytes = crud.get_total_usage_for_subscription(db, client.subscription_id)
+            limit_bytes = client.subscription.total_gb * 1024 * 1024 * 1024
+            if (limit_bytes > 0 and total_usage_bytes >= limit_bytes) or \
+               (client.subscription.expiry_time > 0 and now >= client.subscription.expiry_time):
+                
+                crud.update_subscription(db, client.subscription_id, {"enabled": False})
                 needs_reload = True
-                crud.update_client(db, client.id, {"enabled": False})
     
     if traffic_to_update:
         crud.update_clients_traffic(db, traffic_to_update)
